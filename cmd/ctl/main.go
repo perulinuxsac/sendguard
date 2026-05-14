@@ -39,7 +39,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Uso: sendguard-ctl [-addr URL] [-key KEY] <comando>\n\n")
 		fmt.Fprintf(os.Stderr, "Comandos:\n")
 		fmt.Fprintf(os.Stderr, "  status                      muestra IPs bloqueadas y contadores\n")
-		fmt.Fprintf(os.Stderr, "  block   <ip>                bloquea una IP manualmente\n")
+		fmt.Fprintf(os.Stderr, "  block   [-permanent] <ip>   bloquea una IP manualmente\n")
 		fmt.Fprintf(os.Stderr, "  unblock <ip>                desbloquea una IP manualmente\n")
 		fmt.Fprintf(os.Stderr, "  health                      verifica que el agente está vivo\n")
 		fmt.Fprintf(os.Stderr, "  urban   <ip>                inteligencia de IP (AbuseIPDB + GeoIP)\n")
@@ -68,10 +68,13 @@ func main() {
 	case "health":
 		err = cmdHealth(cli)
 	case "block":
-		if flag.NArg() < 2 {
+		blockFlags := flag.NewFlagSet("block", flag.ExitOnError)
+		permanent := blockFlags.Bool("permanent", false, "bloquear sin expiración")
+		blockFlags.Parse(flag.Args()[1:])
+		if blockFlags.NArg() < 1 {
 			fatalf("block requiere una IP como argumento")
 		}
-		err = cmdBlock(cli, flag.Arg(1))
+		err = cmdBlock(cli, blockFlags.Arg(0), *permanent)
 	case "unblock":
 		if flag.NArg() < 2 {
 			fatalf("unblock requiere una IP como argumento")
@@ -174,12 +177,20 @@ func cmdStatus(cli *apiClient) error {
 	return nil
 }
 
-func cmdBlock(cli *apiClient, ip string) error {
+func cmdBlock(cli *apiClient, ip string, permanent bool) error {
+	path := "/blocked/" + ip
+	if permanent {
+		path += "?ttl=-1"
+	}
 	var body map[string]string
-	if err := cli.do(http.MethodPost, "/blocked/"+ip, &body); err != nil {
+	if err := cli.do(http.MethodPost, path, &body); err != nil {
 		return err
 	}
-	fmt.Printf("IP bloqueada: %s\n", body["blocked"])
+	msg := fmt.Sprintf("IP bloqueada: %s", body["blocked"])
+	if permanent {
+		msg += " (permanente)"
+	}
+	fmt.Println(msg)
 	return nil
 }
 

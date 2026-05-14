@@ -215,8 +215,13 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 	}
 }
 
-// blockIP bloquea una IP vía el backend de firewall configurado.
+// blockIP bloquea una IP usando el BanSeconds configurado globalmente.
 func (e *Enforcer) blockIP(ctx context.Context, alert detection.Alert) {
+	e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds)
+}
+
+// blockIPWithTTL bloquea una IP con un TTL explícito (0 = permanente).
+func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, banSecs int) {
 	if !isValidIP(alert.IP) {
 		slog.Error("enforcement: IP inválida, no se bloqueará", "ip", alert.IP)
 		return
@@ -229,8 +234,8 @@ func (e *Enforcer) blockIP(ctx context.Context, alert detection.Alert) {
 		return
 	}
 	var expiry time.Time
-	if e.cfg.BanSeconds > 0 {
-		expiry = time.Now().Add(time.Duration(e.cfg.BanSeconds) * time.Second)
+	if banSecs > 0 {
+		expiry = time.Now().Add(time.Duration(banSecs) * time.Second)
 	} else {
 		expiry = time.Now().Add(100 * 365 * 24 * time.Hour)
 	}
@@ -255,7 +260,7 @@ func (e *Enforcer) blockIP(ctx context.Context, alert detection.Alert) {
 		}
 	}
 
-	if err := e.fw.Block(ctx, alert.IP, e.cfg.BanSeconds); err != nil {
+	if err := e.fw.Block(ctx, alert.IP, banSecs); err != nil {
 		slog.Error("enforcement: fallo al bloquear IP", "ip", alert.IP, "error", err)
 		e.mu.Lock()
 		delete(e.blockedIPs, alert.IP)
@@ -269,7 +274,7 @@ func (e *Enforcer) blockIP(ctx context.Context, alert detection.Alert) {
 	e.blocksTotal.Add(1)
 	slog.Info("enforcement: IP bloqueada",
 		"ip", alert.IP,
-		"ban_seconds", e.cfg.BanSeconds,
+		"ban_seconds", banSecs,
 		"module", alert.Module,
 	)
 }
@@ -401,17 +406,30 @@ func (e *Enforcer) loadBansFromFirewalld(ctx context.Context) {
 }
 
 // Block bloquea manualmente una IP vía la API (sin pasar por el Engine).
-func (e *Enforcer) Block(ctx context.Context, ip string) error {
+// ttlOverride controla la duración:
+//   - 0  → usa BanSeconds del config
+//   - -1 → permanente (sin expiración)
+//   - >0 → duración en segundos
+func (e *Enforcer) Block(ctx context.Context, ip string, ttlOverride int) error {
 	if !isValidIP(ip) {
 		return fmt.Errorf("IP inválida: %s", ip)
 	}
+
+	banSecs := e.cfg.BanSeconds
+	switch {
+	case ttlOverride == -1:
+		banSecs = 0 // 0 en blockIP → permanente (100 años)
+	case ttlOverride > 0:
+		banSecs = ttlOverride
+	}
+
 	alert := detection.Alert{
 		IP:        ip,
 		Module:    "manual",
 		Action:    detection.ActionBlockIP,
 		Timestamp: time.Now(),
 	}
-	e.blockIP(ctx, alert)
+	e.blockIPWithTTL(ctx, alert, banSecs)
 	if e.cfg.AuditLog != nil {
 		e.cfg.AuditLog.Log(ctx, alert)
 	}

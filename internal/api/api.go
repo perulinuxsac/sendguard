@@ -42,7 +42,8 @@ type Dependencies struct {
 		BlockedIPs() []enforcement.BlockedIPInfo
 		Stats() enforcement.EnforcerStats
 		Unblock(ctx context.Context, ip string) error
-		Block(ctx context.Context, ip string) error
+		// Block bloquea la IP. ttlOverride: 0=config, -1=permanente, >0=segundos.
+		Block(ctx context.Context, ip string, ttlOverride int) error
 	}
 	Engine interface {
 		EventsTotal() int64
@@ -164,11 +165,15 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		if ttl < 0 {
 			ttl = 0
 		}
+		ttlStr := ttl.Truncate(time.Second).String()
+		if ttl > 365*24*time.Hour {
+			ttlStr = "permanente"
+		}
 		ips = append(ips, blockedIPJSON{
 			IP:        b.IP,
 			ExpiresAt: b.Expiry,
 			Module:    b.Module,
-			TTL:       ttl.Truncate(time.Second).String(),
+			TTL:       ttlStr,
 		})
 	}
 
@@ -239,7 +244,14 @@ func (s *Server) handleBlock(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "se requiere IPv4 válida"})
 		return
 	}
-	if err := s.deps.Enforcer.Block(r.Context(), ip); err != nil {
+
+	// ?ttl=0 → config, ?ttl=-1 → permanente, ?ttl=N → N segundos
+	ttl := 0
+	if v := r.URL.Query().Get("ttl"); v != "" {
+		fmt.Sscanf(v, "%d", &ttl)
+	}
+
+	if err := s.deps.Enforcer.Block(r.Context(), ip, ttl); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
