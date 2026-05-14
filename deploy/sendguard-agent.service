@@ -14,12 +14,10 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=sendguard-agent
 
-# Seguridad: limitar superficie de ataque del proceso
+# NoNewPrivileges no requiere namespaces y es seguro en todos los entornos.
+# ProtectSystem/ProtectHome/PrivateTmp se omiten: fallan con 226/NAMESPACE
+# en kernels con namespaces restringidos (OpenVZ, Virtuozzo, algunos KVM).
 NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/opt/zimbra/common/conf /var/log /var/lib/sendguard /etc/ufw
-PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target

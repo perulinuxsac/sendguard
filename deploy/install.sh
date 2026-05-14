@@ -129,10 +129,13 @@ MAILBOX_LOG=""
 section "── Instalación de binarios"
 
 for bin in sendguard-agent sendguard-ctl; do
-    src="$SCRIPT_DIR/../dist/$bin"
     dst="/usr/local/bin/$bin"
-    if [[ -f "$src" ]]; then
-        install -m 755 "$src" "$dst"
+    # Buscar en: mismo dir (tar.gz plano) → ../dist/ (repo dev) → ya instalado
+    if [[ -f "$SCRIPT_DIR/$bin" ]]; then
+        install -m 755 "$SCRIPT_DIR/$bin" "$dst"
+        ok "$dst instalado"
+    elif [[ -f "$SCRIPT_DIR/../dist/$bin" ]]; then
+        install -m 755 "$SCRIPT_DIR/../dist/$bin" "$dst"
         ok "$dst instalado desde dist/"
     elif [[ -f "$dst" ]]; then
         ok "$dst ya presente"
@@ -209,6 +212,10 @@ fi
 MAILBOX_LINE=""
 [[ -n "$MAILBOX_LOG" ]] && MAILBOX_LINE="    mailbox: \"$MAILBOX_LOG\""
 
+# Pre-asignar defaults aquí: $'...' no se expande dentro de heredoc
+[[ -z "$ACCTS_YAML" ]] && ACCTS_YAML=$'\n    []'
+[[ -z "$IPS_YAML" ]]   && IPS_YAML=$'\n    []'
+
 mkdir -p /etc/sendguard "$DB_DIR"
 chmod 750 /etc/sendguard "$DB_DIR"
 
@@ -274,8 +281,8 @@ notification:
     chat_id: "${TG_CHAT_ID}"
 
 whitelist:
-  accounts:${ACCTS_YAML:-$'\n    []'}
-  ips:${IPS_YAML:-$'\n    []'}
+  accounts:${ACCTS_YAML}
+  ips:${IPS_YAML}
 YAML
 
 chmod 640 "$CONFIG_FILE"
