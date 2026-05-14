@@ -405,12 +405,16 @@ func (e *Enforcer) Block(ctx context.Context, ip string) error {
 	if !isValidIP(ip) {
 		return fmt.Errorf("IP inválida: %s", ip)
 	}
-	e.blockIP(ctx, detection.Alert{
+	alert := detection.Alert{
 		IP:        ip,
 		Module:    "manual",
 		Action:    detection.ActionBlockIP,
 		Timestamp: time.Now(),
-	})
+	}
+	e.blockIP(ctx, alert)
+	if e.cfg.AuditLog != nil {
+		e.cfg.AuditLog.Log(ctx, alert)
+	}
 	return nil
 }
 
@@ -435,5 +439,13 @@ func (e *Enforcer) Unblock(ctx context.Context, ip string) error {
 	}
 
 	slog.Info("enforcement: IP desbloqueada manualmente", "ip", ip)
+	if e.cfg.AuditLog != nil {
+		e.cfg.AuditLog.Log(ctx, detection.Alert{
+			IP:        ip,
+			Module:    "manual",
+			Action:    detection.ActionUnblockIP,
+			Timestamp: time.Now(),
+		})
+	}
 	return nil
 }
