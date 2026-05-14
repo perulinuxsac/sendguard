@@ -1,0 +1,100 @@
+# SendGuard Agent — Configuración por servidor
+# Copia este archivo a /etc/sendguard/agent.yaml en cada servidor Zimbra.
+
+# Identificación del servidor
+server_id: "cliente-abc-mail1"       # ID único del servidor (ej: cliente-nombre-mail1)
+client_name: "Laboratorios ABC"      # Nombre del cliente (para reportes y alertas)
+
+# Controller central — StoreAndForward (Fase 3)
+# Con url vacío el agente opera en modo standalone: persiste alertas en SQLite local
+# pero no las reenvía. Cuando el Controller esté disponible, configurar la URL aquí
+# y el agente sincronizará automáticamente los eventos acumulados.
+controller:
+  url: ""                          # vacío = modo standalone
+  api_key: ""                      # Bearer token de autenticación con el Controller
+  sync_interval: 30                # segundos entre intentos de sincronización
+  batch_size: 100                  # alertas por lote enviado al Controller
+
+# Logs de Zimbra a monitorear
+zimbra:
+  logs:
+    main:    "/var/log/mail.log"              # maillog de Postfix — SMTP/SASL (obligatorio)
+    mailbox: "/opt/zimbra/log/mailbox.log"   # log de Zimbra — IMAP/POP3/SOAP (opcional, dejar vacío para deshabilitar)
+  workers: 4
+  postfix_sbin: "/opt/zimbra/common/sbin"    # directorio de binarios de Postfix de Zimbra
+  postfix_conf: "/opt/zimbra/common/conf"    # directorio de configuración de Postfix de Zimbra
+  # Para activar rate-limit, ejecutar una sola vez:
+  #   zmprov mcf zimbraMtaSmtpdSenderRestrictions \
+  #       "check_sender_access lmdb:/opt/zimbra/common/conf/sendguard_access" \
+  #       "permit_sasl_authenticated" \
+  #       "reject_unauthenticated_sender_login_mismatch"
+
+# Reglas de detección — umbrales configurables por servidor
+rules:
+  auth_failed:
+    max_auth_failures: 5    # bloquear IP tras 5 fallos en la ventana
+    scan_time: 300          # ventana de 5 minutos (segundos)
+
+  number_messages:
+    max_messages: 300       # máximo 300 mensajes en la ventana
+    scan_time: 3600         # ventana de 1 hora
+
+  sasl_connections:
+    max_sasl_connections: 20  # conexiones SASL simultáneas antes de alertar
+    scan_time: 300
+
+  impossible_traveler:
+    window_minutes: 30      # login imposible si < 30 min entre países distintos
+
+  queue_monitor:
+    queue_threshold: 2500   # deferrals al mismo dominio destino en la ventana
+    scan_time: 3600         # ventana de 1 hora
+
+  domain_discovery:
+    max_domains: 10         # dominios únicos atacados desde una IP en la ventana
+    scan_time: 600          # ventana de 10 minutos
+
+  bounce_rate:
+    max_bounces: 50         # rebotes por cuenta antes de suspenderla
+    scan_time: 300          # ventana de 5 minutos
+
+# GeoIP — resolución IP → País
+geoip:
+  api_url: "https://ipinfo.io/lite"
+  cache_ttl: 24             # horas de cache para evitar calls repetidos
+  allowed_countries:        # países normales para esta cuenta (vacío = todos)
+    - "PE"
+    - "US"
+
+# Base de datos local SQLite (persistencia de bans y StoreAndForward para Fase 3)
+# El Agent crea el directorio automáticamente si no existe.
+local_db:
+  path: "/var/lib/sendguard/sendguard.db"
+  max_size_mb: 100
+
+# Firewall (única dependencia del sistema operativo)
+# backend: "firewalld" para RHEL/CentOS/Rocky/AlmaLinux
+#           "ufw"       para Ubuntu/Debian
+firewall:
+  backend: "firewalld"
+  ban_seconds: 3600         # bloquear IP por 1 hora (0 = permanente)
+
+# API HTTP de observabilidad y control
+# Solo escucha en localhost por defecto; nunca exponer sin autenticación en producción.
+api:
+  listen: "127.0.0.1:9099"  # vacío = API deshabilitada
+
+# Notificaciones — canales activos cuando se ejecuta una acción de contención
+# Cada canal se activa solo si sus campos requeridos están presentes.
+notification:
+  telegram:
+    token: ""      # token del bot (vacío = canal desactivado)
+    chat_id: ""    # ID del chat, grupo o canal destino
+
+# Whitelist — cuentas e IPs exentas de detección
+whitelist:
+  accounts:
+    - "newsletter@cliente-abc.com"
+    - "noreply@cliente-abc.com"
+  ips:
+    - "190.5.1.0/24"        # red de oficina del cliente
