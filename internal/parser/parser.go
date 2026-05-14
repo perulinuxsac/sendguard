@@ -45,8 +45,9 @@ var (
 	)
 
 	// ABCDEF1234: from=<user@domain.com>, size=1234, nrcpt=2 (queue active)
+	// \s* en vez de \s+ porque algunos transportes omiten el espacio tras la coma.
 	reQmgrFrom = regexp.MustCompile(
-		`^(\w+):\s+from=<([^>]*)>,\s+size=(\d+),\s+nrcpt=(\d+)`,
+		`^(\w+):\s+from=<([^>]*)>,\s*size=(\d+),\s*nrcpt=(\d+)`,
 	)
 
 	// ABCDEF1234: to=<dest@domain>, relay=..., ..., status=sent|bounced|deferred (...)
