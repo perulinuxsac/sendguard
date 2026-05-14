@@ -71,6 +71,7 @@ func main() {
 
 	// Resolver GeoIP (compartido entre módulos que lo necesiten)
 	geoResolver := geoip.New(
+		cfg.GeoIP.DBPath,
 		cfg.GeoIP.APIURL,
 		cfg.GeoIP.Token,
 		time.Duration(cfg.GeoIP.CacheTTL)*time.Hour,

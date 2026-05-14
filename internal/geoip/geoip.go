@@ -1,11 +1,11 @@
-// Package geoip resuelve direcciones IPv4 a códigos de país (ISO 3166-1 alpha-2)
-// usando la API de ipinfo.io/lite. Los resultados se cachean en memoria con un TTL
-// configurable para minimizar llamadas a la API.
+// Package geoip resuelve direcciones IPv4 a códigos de país (ISO 3166-1 alpha-2).
 //
-// Las búsquedas fallidas (API caída, IP privada, respuesta inesperada) retornan ""
-// y NO se cachean, de modo que el próximo intento vuelve a intentar la resolución.
+// Dos modos de operación (seleccionados en New según la configuración):
+//   - DB local (MaxMind GeoLite2-Country.mmdb): sin red, sin rate-limit, microsegundos.
+//   - HTTP API (ipinfo.io u otro): fallback cuando no hay DB configurada.
 //
-// Thread-safe: puede ser llamado concurrentemente desde múltiples goroutines.
+// Las búsquedas HTTP fallidas no se cachean para reintentar en el próximo ciclo.
+// Thread-safe.
 package geoip
 
 import (
@@ -17,15 +17,21 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/oschwald/geoip2-golang"
 )
 
 const (
-	httpTimeout    = 3 * time.Second // timeout por request a la API
-	maxBodyBytes   = 256             // límite de lectura de la respuesta
+	httpTimeout  = 3 * time.Second
+	maxBodyBytes = 256
 )
 
-// Resolver resuelve IPs a países con caché en memoria.
+// Resolver resuelve IPs a códigos de país.
 type Resolver struct {
+	// Modo DB local
+	db *geoip2.Reader
+
+	// Modo HTTP API
 	apiURL     string
 	token      string
 	cacheTTL   time.Duration
@@ -39,10 +45,19 @@ type cacheEntry struct {
 	expiry  time.Time
 }
 
-// New crea un Resolver. apiURL es la URL base (ej: "https://ipinfo.io").
-// token es opcional; si no está vacío se envía como "Authorization: Bearer <token>".
-// cacheTTL es el tiempo de vida de cada entrada en caché.
-func New(apiURL, token string, cacheTTL time.Duration) *Resolver {
+// New crea un Resolver. Si dbPath no está vacío y el archivo existe, usa la DB
+// local (MaxMind GeoLite2-Country.mmdb). En caso contrario usa el HTTP API.
+// apiURL y token solo aplican al modo HTTP.
+func New(dbPath, apiURL, token string, cacheTTL time.Duration) *Resolver {
+	if dbPath != "" {
+		db, err := geoip2.Open(dbPath)
+		if err != nil {
+			slog.Warn("geoip: no se pudo abrir DB local, usando HTTP API", "path", dbPath, "error", err)
+		} else {
+			slog.Info("geoip: usando base de datos local", "path", dbPath)
+			return &Resolver{db: db}
+		}
+	}
 	return &Resolver{
 		apiURL:   strings.TrimRight(apiURL, "/"),
 		token:    token,
@@ -54,15 +69,43 @@ func New(apiURL, token string, cacheTTL time.Duration) *Resolver {
 	}
 }
 
-// Country retorna el código de país ISO 3166-1 alpha-2 para la IP dada (ej: "PE", "US").
-// Retorna "" si la IP es privada, la resolución falla, o la respuesta es inesperada.
-// Los resultados exitosos se cachean por cacheTTL.
+// Close libera recursos de la DB local (no-op en modo HTTP).
+func (r *Resolver) Close() {
+	if r.db != nil {
+		r.db.Close()
+	}
+}
+
+// Country retorna el código ISO 3166-1 alpha-2 para la IP dada (ej: "PE", "US").
+// Retorna "" para IPs privadas, fallos de resolución o respuestas inesperadas.
 func (r *Resolver) Country(ip string) string {
 	if isPrivateIP(ip) {
 		return ""
 	}
+	if r.db != nil {
+		return r.lookupDB(ip)
+	}
+	return r.lookupAPI(ip)
+}
 
-	// Lectura con RLock (caso frecuente: cache hit)
+func (r *Resolver) lookupDB(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ""
+	}
+	record, err := r.db.Country(parsed)
+	if err != nil {
+		slog.Warn("geoip: error en DB local", "ip", ip, "error", err)
+		return ""
+	}
+	country := strings.ToUpper(record.Country.IsoCode)
+	if len(country) != 2 {
+		return ""
+	}
+	return country
+}
+
+func (r *Resolver) lookupAPI(ip string) string {
 	r.mu.RLock()
 	if entry, ok := r.cache[ip]; ok && time.Now().Before(entry.expiry) {
 		r.mu.RUnlock()
@@ -70,10 +113,9 @@ func (r *Resolver) Country(ip string) string {
 	}
 	r.mu.RUnlock()
 
-	// Cache miss: consultar API
-	country := r.lookup(ip)
+	country := r.fetchAPI(ip)
 	if country == "" {
-		return "" // no cachear fallos para reintentar en la próxima llamada
+		return ""
 	}
 
 	r.mu.Lock()
@@ -83,15 +125,12 @@ func (r *Resolver) Country(ip string) string {
 	}
 	r.mu.Unlock()
 
-	slog.Debug("geoip: IP resuelta", "ip", ip, "country", country)
+	slog.Debug("geoip: IP resuelta via API", "ip", ip, "country", country)
 	return country
 }
 
-// lookup hace una petición HTTP a la API y retorna el código de país o "".
-func (r *Resolver) lookup(ip string) string {
-	url := r.apiURL + "/" + ip
-
-	req, err := http.NewRequest(http.MethodGet, url, nil) //nolint:noctx
+func (r *Resolver) fetchAPI(ip string) string {
+	req, err := http.NewRequest(http.MethodGet, r.apiURL+"/"+ip, nil) //nolint:noctx
 	if err != nil {
 		return ""
 	}
@@ -116,12 +155,10 @@ func (r *Resolver) lookup(ip string) string {
 		return ""
 	}
 
-	// ipinfo.io retorna JSON: {"ip":"...","country":"PE",...}
 	var result struct {
 		Country string `json:"country"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		// Algunos endpoints retornan solo el código como texto plano ("PE\n")
 		plain := strings.TrimSpace(string(body))
 		if len(plain) == 2 {
 			return strings.ToUpper(plain)
@@ -136,8 +173,6 @@ func (r *Resolver) lookup(ip string) string {
 	return strings.ToUpper(result.Country)
 }
 
-// isPrivateIP retorna true para IPs de redes privadas/reservadas.
-// Estas IPs no tienen sentido en una consulta GeoIP.
 func isPrivateIP(ip string) bool {
 	parsed := net.ParseIP(ip)
 	if parsed == nil {
@@ -151,15 +186,14 @@ func isPrivateIP(ip string) bool {
 	return false
 }
 
-// privateRanges lista los rangos de IPs privadas y reservadas según RFC 1918 / RFC 5735.
 var privateRanges = func() []*net.IPNet {
 	ranges := []string{
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
 		"127.0.0.0/8",
-		"169.254.0.0/16", // link-local
-		"100.64.0.0/10",  // shared address space (RFC 6598)
+		"169.254.0.0/16",
+		"100.64.0.0/10",
 	}
 	nets := make([]*net.IPNet, 0, len(ranges))
 	for _, r := range ranges {

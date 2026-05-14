@@ -10,9 +10,9 @@ import (
 	"github.com/perulinux/sendguard/internal/geoip"
 )
 
-// newTestResolver crea un Resolver apuntando al servidor de test dado.
-func newTestResolver(srv *httptest.Server) *geoip.Resolver {
-	return geoip.New(srv.URL, "", time.Hour)
+// newAPIResolver crea un Resolver en modo HTTP API apuntando al servidor de test.
+func newAPIResolver(srv *httptest.Server) *geoip.Resolver {
+	return geoip.New("", srv.URL, "", time.Hour)
 }
 
 // jsonSrv devuelve un servidor HTTP que responde siempre con el JSON dado.
@@ -27,40 +27,37 @@ func TestCountryPublicIP(t *testing.T) {
 	srv := jsonSrv(`{"ip":"1.2.3.4","country":"PE"}`)
 	defer srv.Close()
 
-	r := newTestResolver(srv)
+	r := newAPIResolver(srv)
 	if got := r.Country("1.2.3.4"); got != "PE" {
 		t.Errorf("Country: got %q, want %q", got, "PE")
 	}
 }
 
 func TestCountryNormalizesLowercase(t *testing.T) {
-	// La API podría devolver "pe" en lugar de "PE".
 	srv := jsonSrv(`{"country":"pe"}`)
 	defer srv.Close()
 
-	r := newTestResolver(srv)
+	r := newAPIResolver(srv)
 	if got := r.Country("1.2.3.4"); got != "PE" {
 		t.Errorf("normalización a mayúsculas: got %q, want %q", got, "PE")
 	}
 }
 
 func TestCountryPlainTextResponse(t *testing.T) {
-	// Algunos endpoints devuelven solo el código como texto: "BR\n".
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("BR\n")) //nolint:errcheck
 	}))
 	defer srv.Close()
 
-	r := newTestResolver(srv)
+	r := newAPIResolver(srv)
 	if got := r.Country("1.2.3.4"); got != "BR" {
 		t.Errorf("respuesta texto plano: got %q, want %q", got, "BR")
 	}
 }
 
 func TestCountryPrivateIPs(t *testing.T) {
-	// IPs privadas deben retornar "" sin consultar la API.
-	// Si consultara, fallaría porque no hay servidor.
-	r := geoip.New("http://127.0.0.1:0", "", time.Hour) // puerto 0 = no hay servidor
+	// IPs privadas deben retornar "" sin consultar la API ni la DB.
+	r := geoip.New("", "http://127.0.0.1:0", "", time.Hour)
 
 	privateIPs := []string{
 		"10.0.0.1",
@@ -71,13 +68,13 @@ func TestCountryPrivateIPs(t *testing.T) {
 		"192.168.255.255",
 		"127.0.0.1",
 		"127.0.0.2",
-		"169.254.1.1",   // link-local
-		"100.64.0.1",    // shared address space RFC 6598
+		"169.254.1.1",
+		"100.64.0.1",
 		"100.127.255.255",
 	}
 	for _, ip := range privateIPs {
 		if got := r.Country(ip); got != "" {
-			t.Errorf("IP privada %s: got %q, want %q (sin consulta a API)", ip, got, "")
+			t.Errorf("IP privada %s: got %q, want %q", ip, got, "")
 		}
 	}
 }
@@ -90,9 +87,9 @@ func TestCountryCacheHit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	r := newTestResolver(srv)
+	r := newAPIResolver(srv)
 	r.Country("8.8.8.8")
-	r.Country("8.8.8.8") // segunda llamada: debe usar cache
+	r.Country("8.8.8.8")
 
 	if callCount != 1 {
 		t.Errorf("cache hit: se esperaba 1 llamada a la API, got %d", callCount)
@@ -107,11 +104,10 @@ func TestCountryCacheMissAfterTTL(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// TTL muy corto para que expire antes de la segunda llamada.
-	r := geoip.New(srv.URL, "", time.Nanosecond)
+	r := geoip.New("", srv.URL, "", time.Nanosecond)
 	r.Country("8.8.8.8")
 	time.Sleep(time.Millisecond)
-	r.Country("8.8.8.8") // cache expirado → segunda llamada a la API
+	r.Country("8.8.8.8")
 
 	if callCount != 2 {
 		t.Errorf("cache expirado: se esperaban 2 llamadas a la API, got %d", callCount)
@@ -119,8 +115,6 @@ func TestCountryCacheMissAfterTTL(t *testing.T) {
 }
 
 func TestCountryFailureNotCached(t *testing.T) {
-	// Los fallos (API caída, respuesta inválida) NO se cachean.
-	// El siguiente intento debe reintentar la consulta.
 	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
@@ -132,9 +126,9 @@ func TestCountryFailureNotCached(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	r := newTestResolver(srv)
-	first := r.Country("1.2.3.4") // falla → no se cachea
-	second := r.Country("1.2.3.4") // reintento → debe funcionar
+	r := newAPIResolver(srv)
+	first := r.Country("1.2.3.4")
+	second := r.Country("1.2.3.4")
 
 	if first != "" {
 		t.Errorf("primer intento (fallo API): got %q, want %q", first, "")
@@ -153,7 +147,7 @@ func TestCountryAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	r := newTestResolver(srv)
+	r := newAPIResolver(srv)
 	if got := r.Country("1.2.3.4"); got != "" {
 		t.Errorf("error HTTP 500: got %q, want %q", got, "")
 	}
@@ -165,25 +159,23 @@ func TestCountryInvalidJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	r := newTestResolver(srv)
+	r := newAPIResolver(srv)
 	if got := r.Country("1.2.3.4"); got != "" {
 		t.Errorf("JSON inválido: got %q, want %q", got, "")
 	}
 }
 
 func TestCountryInvalidCountryLength(t *testing.T) {
-	// País de longitud incorrecta (no 2 chars) debe retornar "".
 	srv := jsonSrv(`{"country":"PER"}`)
 	defer srv.Close()
 
-	r := newTestResolver(srv)
+	r := newAPIResolver(srv)
 	if got := r.Country("1.2.3.4"); got != "" {
 		t.Errorf("país de 3 letras: got %q, want %q", got, "")
 	}
 }
 
 func TestCountryRequestURL(t *testing.T) {
-	// Verifica que la URL de la request incluya la IP al final.
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -191,7 +183,7 @@ func TestCountryRequestURL(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	r := newTestResolver(srv)
+	r := newAPIResolver(srv)
 	r.Country("5.6.7.8")
 
 	if gotPath != "/5.6.7.8" {
@@ -200,11 +192,10 @@ func TestCountryRequestURL(t *testing.T) {
 }
 
 func TestCountryConcurrentSafe(t *testing.T) {
-	// Múltiples goroutines pueden llamar a Country() sin data races.
 	srv := jsonSrv(`{"country":"JP"}`)
 	defer srv.Close()
 
-	r := newTestResolver(srv)
+	r := newAPIResolver(srv)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
@@ -215,4 +206,15 @@ func TestCountryConcurrentSafe(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestCountryDBPathInvalidFallsBackToAPI(t *testing.T) {
+	// DB path inexistente → debe caer al HTTP API sin error fatal.
+	srv := jsonSrv(`{"country":"AR"}`)
+	defer srv.Close()
+
+	r := geoip.New("/tmp/no-existe.mmdb", srv.URL, "", time.Hour)
+	if got := r.Country("1.2.3.4"); got != "AR" {
+		t.Errorf("fallback a API cuando DB no existe: got %q, want %q", got, "AR")
+	}
 }

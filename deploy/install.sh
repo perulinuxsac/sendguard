@@ -178,6 +178,11 @@ ask "URL del Controller central (vacío = standalone)"  ""  CTRL_URL
 CTRL_KEY=""
 [[ -n "$CTRL_URL" ]] && ask "API Key del Controller"  ""  CTRL_KEY
 
+echo ""
+info "GeoIP local MaxMind (recomendado para producción, evita rate-limits)"
+info "Registro gratuito en: https://www.maxmind.com/en/geolite2/signup"
+ask "License Key de MaxMind (vacío = usar HTTP API)"  ""  MM_LICENSE_KEY
+
 # ── Generar YAML ──────────────────────────────────────────────────────────────
 section "── Generando configuración"
 
@@ -215,6 +220,33 @@ MAILBOX_LINE=""
 # Pre-asignar defaults aquí: $'...' no se expande dentro de heredoc
 [[ -z "$ACCTS_YAML" ]] && ACCTS_YAML=$'\n    []'
 [[ -z "$IPS_YAML" ]]   && IPS_YAML=$'\n    []'
+
+# Descargar GeoLite2-Country.mmdb si se proporcionó license key
+MMDB_PATH=""
+GEOIP_DB_LINE="  # db_path no configurado — usando HTTP API fallback"
+if [[ -n "$MM_LICENSE_KEY" ]]; then
+    MMDB_URL="https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${MM_LICENSE_KEY}&suffix=tar.gz"
+    MMDB_TAR="$DB_DIR/GeoLite2-Country.tar.gz"
+    MMDB_PATH="$DB_DIR/GeoLite2-Country.mmdb"
+    info "Descargando GeoLite2-Country.mmdb..."
+    if curl -fsSL "$MMDB_URL" -o "$MMDB_TAR" 2>/dev/null; then
+        tar -xzf "$MMDB_TAR" --wildcards --strip-components=1 -C "$DB_DIR" '*.mmdb' 2>/dev/null \
+            && rm -f "$MMDB_TAR" \
+            && ok "GeoLite2-Country.mmdb instalado en $DB_DIR" \
+            && GEOIP_DB_LINE="  db_path: \"$MMDB_PATH\"" \
+            || warn "Error extrayendo mmdb — se usará HTTP API"
+    else
+        warn "No se pudo descargar la DB (license key inválido o sin acceso a internet) — se usará HTTP API"
+        MMDB_PATH=""
+    fi
+
+    # Cron semanal de actualización (jueves 3am, MaxMind actualiza martes/viernes)
+    if [[ -n "$MMDB_PATH" ]]; then
+        CRON_CMD="curl -fsSL '${MMDB_URL}' -o '${MMDB_TAR}' && tar -xzf '${MMDB_TAR}' --wildcards --strip-components=1 -C '${DB_DIR}' '*.mmdb' && rm -f '${MMDB_TAR}' && systemctl reload-or-restart sendguard-agent"
+        (crontab -l 2>/dev/null | grep -v 'GeoLite2-Country'; echo "0 3 * * 4 $CRON_CMD # SendGuard GeoIP update") | crontab -
+        ok "Cron de actualización GeoIP instalado (jueves 3am)"
+    fi
+fi
 
 mkdir -p /etc/sendguard "$DB_DIR"
 chmod 750 /etc/sendguard "$DB_DIR"
@@ -260,6 +292,7 @@ rules:
     scan_time: 300
 
 geoip:
+${GEOIP_DB_LINE}
   api_url: "https://ipinfo.io"
   cache_ttl: 24
   allowed_countries:${COUNTRIES_YAML}

@@ -86,9 +86,13 @@ type Rules struct {
 }
 
 type GeoIPConf struct {
+	// DBPath: ruta al archivo GeoLite2-Country.mmdb (recomendado para producción).
+	// Si está configurado, se usa la DB local (sin red, sin rate-limit).
+	// Si está vacío, se cae al HTTP API definido en APIURL.
+	DBPath           string   `yaml:"db_path"`
 	APIURL           string   `yaml:"api_url"`
-	Token            string   `yaml:"token"`     // opcional: Bearer token para ipinfo.io (aumenta límite a 50k→ilimitado)
-	CacheTTL         int      `yaml:"cache_ttl"` // horas
+	Token            string   `yaml:"token"`     // opcional: Bearer token para ipinfo.io
+	CacheTTL         int      `yaml:"cache_ttl"` // horas (aplica solo al modo HTTP API)
 	AllowedCountries []string `yaml:"allowed_countries"`
 }
 

@@ -60,9 +60,13 @@ rules:
 
 # GeoIP — resolución IP → País
 geoip:
-  api_url: "https://ipinfo.io"   # free: 50k req/mes sin token
-  # token: ""                    # opcional: token de ipinfo.io para límites más altos
-  cache_ttl: 24             # horas de cache para evitar calls repetidos
+  # db_path: "/var/lib/sendguard/GeoLite2-Country.mmdb"
+  # Recomendado para producción: DB local MaxMind (sin red, sin rate-limit).
+  # Registro gratuito en https://www.maxmind.com/en/geolite2/signup
+  # Sin db_path, se usa el HTTP API (fallback).
+  api_url: "https://ipinfo.io"   # fallback HTTP: 50k req/mes gratis
+  # token: ""                    # opcional: token ipinfo.io para límite mayor
+  cache_ttl: 24             # horas de cache (solo aplica al modo HTTP API)
   allowed_countries:        # países normales para esta cuenta (vacío = todos)
     - "PE"
     - "US"
