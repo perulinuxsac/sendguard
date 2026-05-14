@@ -87,6 +87,7 @@ type Rules struct {
 
 type GeoIPConf struct {
 	APIURL           string   `yaml:"api_url"`
+	Token            string   `yaml:"token"`     // opcional: Bearer token para ipinfo.io (aumenta límite a 50k→ilimitado)
 	CacheTTL         int      `yaml:"cache_ttl"` // horas
 	AllowedCountries []string `yaml:"allowed_countries"`
 }
@@ -165,7 +166,7 @@ func Default() *Config {
 	cfg.Rules.BounceRate.MaxBounces = 50
 	cfg.Rules.BounceRate.ScanTime = 300
 
-	cfg.GeoIP.APIURL = "https://ipinfo.io/lite"
+	cfg.GeoIP.APIURL = "https://ipinfo.io"
 	cfg.GeoIP.CacheTTL = 24
 
 	cfg.Firewall.Backend = "firewalld"

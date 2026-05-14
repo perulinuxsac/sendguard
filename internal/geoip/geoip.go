@@ -27,6 +27,7 @@ const (
 // Resolver resuelve IPs a países con caché en memoria.
 type Resolver struct {
 	apiURL     string
+	token      string
 	cacheTTL   time.Duration
 	httpClient *http.Client
 	mu         sync.RWMutex
@@ -38,11 +39,13 @@ type cacheEntry struct {
 	expiry  time.Time
 }
 
-// New crea un Resolver. apiURL es la URL base (ej: "https://ipinfo.io/lite").
+// New crea un Resolver. apiURL es la URL base (ej: "https://ipinfo.io").
+// token es opcional; si no está vacío se envía como "Authorization: Bearer <token>".
 // cacheTTL es el tiempo de vida de cada entrada en caché.
-func New(apiURL string, cacheTTL time.Duration) *Resolver {
+func New(apiURL, token string, cacheTTL time.Duration) *Resolver {
 	return &Resolver{
 		apiURL:   strings.TrimRight(apiURL, "/"),
+		token:    token,
 		cacheTTL: cacheTTL,
 		httpClient: &http.Client{
 			Timeout: httpTimeout,
@@ -86,10 +89,17 @@ func (r *Resolver) Country(ip string) string {
 
 // lookup hace una petición HTTP a la API y retorna el código de país o "".
 func (r *Resolver) lookup(ip string) string {
-	// Construimos la URL: {base}/{ip} que retorna JSON con campo "country".
 	url := r.apiURL + "/" + ip
 
-	resp, err := r.httpClient.Get(url) //nolint:noctx
+	req, err := http.NewRequest(http.MethodGet, url, nil) //nolint:noctx
+	if err != nil {
+		return ""
+	}
+	if r.token != "" {
+		req.Header.Set("Authorization", "Bearer "+r.token)
+	}
+
+	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		slog.Warn("geoip: error al consultar API", "ip", ip, "error", err)
 		return ""

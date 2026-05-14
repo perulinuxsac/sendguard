@@ -60,7 +60,8 @@ rules:
 
 # GeoIP — resolución IP → País
 geoip:
-  api_url: "https://ipinfo.io/lite"
+  api_url: "https://ipinfo.io"   # free: 50k req/mes sin token
+  # token: ""                    # opcional: token de ipinfo.io para límites más altos
   cache_ttl: 24             # horas de cache para evitar calls repetidos
   allowed_countries:        # países normales para esta cuenta (vacío = todos)
     - "PE"

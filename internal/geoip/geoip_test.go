@@ -12,7 +12,7 @@ import (
 
 // newTestResolver crea un Resolver apuntando al servidor de test dado.
 func newTestResolver(srv *httptest.Server) *geoip.Resolver {
-	return geoip.New(srv.URL, time.Hour)
+	return geoip.New(srv.URL, "", time.Hour)
 }
 
 // jsonSrv devuelve un servidor HTTP que responde siempre con el JSON dado.
@@ -60,7 +60,7 @@ func TestCountryPlainTextResponse(t *testing.T) {
 func TestCountryPrivateIPs(t *testing.T) {
 	// IPs privadas deben retornar "" sin consultar la API.
 	// Si consultara, fallaría porque no hay servidor.
-	r := geoip.New("http://127.0.0.1:0", time.Hour) // puerto 0 = no hay servidor
+	r := geoip.New("http://127.0.0.1:0", "", time.Hour) // puerto 0 = no hay servidor
 
 	privateIPs := []string{
 		"10.0.0.1",
@@ -108,7 +108,7 @@ func TestCountryCacheMissAfterTTL(t *testing.T) {
 	defer srv.Close()
 
 	// TTL muy corto para que expire antes de la segunda llamada.
-	r := geoip.New(srv.URL, time.Nanosecond)
+	r := geoip.New(srv.URL, "", time.Nanosecond)
 	r.Country("8.8.8.8")
 	time.Sleep(time.Millisecond)
 	r.Country("8.8.8.8") // cache expirado → segunda llamada a la API

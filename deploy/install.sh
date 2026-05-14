@@ -260,7 +260,7 @@ rules:
     scan_time: 300
 
 geoip:
-  api_url: "https://ipinfo.io/lite"
+  api_url: "https://ipinfo.io"
   cache_ttl: 24
   allowed_countries:${COUNTRIES_YAML}
 
