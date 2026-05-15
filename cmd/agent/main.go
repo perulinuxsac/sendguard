@@ -238,6 +238,7 @@ func main() {
 		AuditLog:        auditLog,
 		Store:           localStore,
 		Forwarder:       fwd,
+		Whitelist:       wl, // IPs bloqueadas se añaden al whitelist del engine automáticamente
 	})
 
 	// Restaurar bans activos de firewalld (resiliencia al reinicio)

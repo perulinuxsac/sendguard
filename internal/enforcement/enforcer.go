@@ -26,6 +26,14 @@ type AlertForwarder interface {
 	SaveAlert(a detection.Alert)
 }
 
+// IPWhitelist es el subconjunto de detection.Whitelist que necesita el Enforcer.
+// Permite añadir y quitar IPs en caliente sin importar el paquete detection completo
+// (aunque en la práctica siempre se pasa un *detection.Whitelist).
+type IPWhitelist interface {
+	AddIP(ip string) error
+	RemoveIP(ip string)
+}
+
 // Config agrupa los parámetros del Enforcer.
 type Config struct {
 	FirewallBackend string            // "firewalld" (RHEL) o "ufw" (Ubuntu); default: firewalld
@@ -38,6 +46,7 @@ type Config struct {
 	AuditLog        *audit.Logger     // nil deshabilita el audit log
 	Store           *store.Store      // nil deshabilita la persistencia local SQLite
 	Forwarder       AlertForwarder    // nil deshabilita el StoreAndForward
+	Whitelist       IPWhitelist       // nil deshabilita la sincronización con el engine
 }
 
 // blockedIP registra cuándo expira el baneo de una IP para evitar
@@ -150,6 +159,9 @@ func (e *Enforcer) unbanExpired(ctx context.Context) {
 		if e.cfg.Store != nil {
 			e.cfg.Store.DeleteBan(ip)
 		}
+		if e.cfg.Whitelist != nil {
+			e.cfg.Whitelist.RemoveIP(ip)
+		}
 	}
 }
 
@@ -248,7 +260,7 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 	e.mu.Lock()
 	if entry, exists := e.blockedIPs[alert.IP]; exists && time.Now().Before(entry.expiry) {
 		e.mu.Unlock()
-		slog.Debug("enforcement: IP ya baneada, omitiendo", "ip", alert.IP)
+		slog.Info("enforcement: IP ya bloqueada, omitiendo duplicado", "ip", alert.IP, "expiry", entry.expiry.Format("15:04:05"))
 		return
 	}
 	var expiry time.Time
@@ -295,6 +307,12 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		"ban_seconds", banSecs,
 		"module", alert.Module,
 	)
+
+	// Agregar a la whitelist del engine para que deje de despachar eventos de esta IP.
+	// Cuando el ban expire se quitará automáticamente (ver unbanExpired / Unblock).
+	if e.cfg.Whitelist != nil {
+		_ = e.cfg.Whitelist.AddIP(alert.IP)
+	}
 }
 
 // suspendAccount suspende una cuenta Zimbra vía zmprov y bloquea la IP atacante si está presente.
@@ -408,6 +426,9 @@ func (e *Enforcer) loadBansFromStore() int {
 		if _, exists := e.blockedIPs[b.IP]; !exists {
 			e.blockedIPs[b.IP] = blockedIP{expiry: b.ExpiresAt, module: b.Module}
 			loaded++
+			if e.cfg.Whitelist != nil {
+				_ = e.cfg.Whitelist.AddIP(b.IP)
+			}
 		}
 	}
 	e.mu.Unlock()
@@ -441,6 +462,9 @@ func (e *Enforcer) loadBansFromFirewalld(ctx context.Context) {
 			}
 			e.blockedIPs[ip] = blockedIP{expiry: expiry, module: "restored"}
 			loaded++
+			if e.cfg.Whitelist != nil {
+				_ = e.cfg.Whitelist.AddIP(ip)
+			}
 		}
 	}
 	e.mu.Unlock()
@@ -495,6 +519,10 @@ func (e *Enforcer) Unblock(ctx context.Context, ip string) error {
 		if err := e.cfg.Store.DeleteBan(ip); err != nil {
 			slog.Warn("enforcement: no se pudo eliminar ban de SQLite", "ip", ip, "error", err)
 		}
+	}
+
+	if e.cfg.Whitelist != nil {
+		e.cfg.Whitelist.RemoveIP(ip)
 	}
 
 	if err := e.fw.Unblock(ctx, ip); err != nil {
