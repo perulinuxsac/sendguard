@@ -147,6 +147,7 @@ type Engine struct {
 	AlertsTotal  atomic.Int64 // total de alertas emitidas
 	domainMu     sync.RWMutex
 	domainAlerts map[string]int64 // dominio → alertas acumuladas
+	proxyCIDRs   []*net.IPNet     // rangos de proxies cloud: la IP se limpia antes de despachar
 }
 
 // NewEngine crea un Engine con los módulos y whitelist dados.
@@ -176,11 +177,52 @@ func (e *Engine) Run(ctx context.Context, eventCh <-chan event.Event) {
 	}
 }
 
+// SetProxyCIDRs registra rangos de proxies cloud (Microsoft, Google, Apple…).
+// Los eventos cuya IP caiga en estos rangos tendrán la IP limpiada antes de ser
+// despachados: los módulos IP-céntricos (auth_failed, rcpt_flood…) no cuentan la
+// IP de proxy, pero los módulos de cuenta (sasl_connections, impossible_traveler…)
+// siguen operando con normalidad.
+// Llamar antes de Run().
+func (e *Engine) SetProxyCIDRs(cidrs []string) {
+	for _, raw := range cidrs {
+		if !strings.ContainsRune(raw, '/') {
+			raw += "/32"
+		}
+		_, cidr, err := net.ParseCIDR(raw)
+		if err != nil {
+			slog.Warn("engine: proxy CIDR inválida, ignorando", "entry", raw)
+			continue
+		}
+		e.proxyCIDRs = append(e.proxyCIDRs, cidr)
+	}
+}
+
+// isProxyIP comprueba si una IP pertenece a los rangos de proxy cloud configurados.
+func (e *Engine) isProxyIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, cidr := range e.proxyCIDRs {
+		if cidr.Contains(parsed) {
+			return true
+		}
+	}
+	return false
+}
+
 // dispatch envía un evento a todos los módulos, respetando la whitelist.
 func (e *Engine) dispatch(ev event.Event) {
 	e.EventsTotal.Add(1)
 	if e.isWhitelisted(ev) {
 		return
+	}
+	// Si la IP es de un proxy cloud conocido, limpiarla para que los módulos
+	// IP-céntricos (auth_failed, rcpt_flood, etc.) no la bloqueen. Los módulos
+	// que trabajan por cuenta (sasl_connections, impossible_traveler) no se ven
+	// afectados porque usan ev.Account, no ev.IP.
+	if ev.IP != "" && e.isProxyIP(ev.IP) {
+		ev.IP = ""
 	}
 	for _, m := range e.modules {
 		alerts := m.Handle(ev)

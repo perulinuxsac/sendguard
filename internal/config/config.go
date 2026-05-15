@@ -19,6 +19,10 @@ type Config struct {
 	Controller   ControllerConf `yaml:"controller"`
 	Firewall     FirewallConf   `yaml:"firewall"`
 	Whitelist    Whitelist      `yaml:"whitelist"`
+	// ProxyCIDRs: rangos de proxies cloud legítimos (Microsoft, Google, Apple…).
+	// Los eventos de estas IPs no activan módulos IP-céntricos (auth_failed, rcpt_flood)
+	// pero sí los de cuenta (sasl_connections, impossible_traveler).
+	ProxyCIDRs   []string       `yaml:"proxy_cidrs"`
 	Notification NotifyConf     `yaml:"notification"`
 	API          APIConf        `yaml:"api"`
 }
@@ -203,6 +207,18 @@ func Default() *Config {
 
 	cfg.GeoIP.APIURL = "https://ipinfo.io"
 	cfg.GeoIP.CacheTTL = 24
+
+	// Proxies cloud conocidos: IPs de estos rangos no activan auth_failed/rcpt_flood.
+	cfg.ProxyCIDRs = []string{
+		"52.96.0.0/12",    // Microsoft Office 365 / Outlook Mobile
+		"52.112.0.0/14",   // Microsoft Teams / Exchange Online
+		"104.47.0.0/17",   // Microsoft Exchange Online Protection
+		"40.92.0.0/15",    // Microsoft Exchange
+		"40.107.0.0/16",   // Microsoft Exchange
+		"66.102.0.0/20",   // Google Mail
+		"209.85.128.0/17", // Google SMTP
+		"17.0.0.0/8",      // Apple (iCloud Mail)
+	}
 
 	cfg.Firewall.Backend = "firewalld"
 	cfg.Firewall.BanSeconds = 3600

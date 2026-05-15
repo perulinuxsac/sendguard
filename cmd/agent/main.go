@@ -255,6 +255,11 @@ func main() {
 		slog.Info("watcher mailbox iniciado", "path", cfg.Zimbra.Logs.Mailbox)
 	}
 
+	if len(cfg.ProxyCIDRs) > 0 {
+		engine.SetProxyCIDRs(cfg.ProxyCIDRs)
+		slog.Info("engine: proxy CIDRs configurados", "count", len(cfg.ProxyCIDRs))
+	}
+
 	go engine.Run(ctx, eventCh)
 	go enforcer.Run(ctx, alertCh)
 
