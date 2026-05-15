@@ -297,7 +297,7 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 	)
 }
 
-// suspendAccount suspende una cuenta Zimbra vía zmprov.
+// suspendAccount suspende una cuenta Zimbra vía zmprov y bloquea la IP atacante si está presente.
 func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 	zmprov := e.cfg.ZmprovBin
 	if zmprov == "" {
@@ -318,6 +318,11 @@ func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 	e.suspendedAccts[alert.Account] = suspendedAcct{module: alert.Module, timestamp: time.Now()}
 	e.mu.Unlock()
 	slog.Info("enforcement: cuenta suspendida", "account", alert.Account, "module", alert.Module)
+
+	// Bloquear también la IP atacante en el firewall si está presente en la alerta.
+	if alert.IP != "" {
+		e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds)
+	}
 }
 
 // isValidIP verifica que el string sea una dirección IPv4 válida.
