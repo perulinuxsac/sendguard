@@ -40,6 +40,7 @@ import (
 type Dependencies struct {
 	Enforcer interface {
 		BlockedIPs() []enforcement.BlockedIPInfo
+		SuspendedAccounts() []enforcement.SuspendedAcctInfo
 		Stats() enforcement.EnforcerStats
 		Unblock(ctx context.Context, ip string) error
 		// Block bloquea la IP. ttlOverride: 0=config, -1=permanente, >0=segundos.
@@ -135,10 +136,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 type statusResponse struct {
-	Uptime     string          `json:"uptime"`
-	Version    string          `json:"version"`
-	BlockedIPs []blockedIPJSON `json:"blocked_ips"`
-	Stats      statsJSON       `json:"stats"`
+	Uptime             string               `json:"uptime"`
+	Version            string               `json:"version"`
+	BlockedIPs         []blockedIPJSON       `json:"blocked_ips"`
+	SuspendedAccounts  []suspendedAcctJSON   `json:"suspended_accounts"`
+	Stats              statsJSON             `json:"stats"`
+}
+
+type suspendedAcctJSON struct {
+	Account   string    `json:"account"`
+	Module    string    `json:"module"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 type blockedIPJSON struct {
@@ -177,11 +185,22 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	suspended := s.deps.Enforcer.SuspendedAccounts()
+	accts := make([]suspendedAcctJSON, 0, len(suspended))
+	for _, a := range suspended {
+		accts = append(accts, suspendedAcctJSON{
+			Account:   a.Account,
+			Module:    a.Module,
+			Timestamp: a.Timestamp,
+		})
+	}
+
 	enfStats := s.deps.Enforcer.Stats()
 	resp := statusResponse{
-		Uptime:     time.Since(s.deps.StartTime).Truncate(time.Second).String(),
-		Version:    version.Version,
-		BlockedIPs: ips,
+		Uptime:            time.Since(s.deps.StartTime).Truncate(time.Second).String(),
+		Version:           version.Version,
+		BlockedIPs:        ips,
+		SuspendedAccounts: accts,
 		Stats: statsJSON{
 			EventsTotal:      s.deps.Engine.EventsTotal(),
 			AlertsTotal:      s.deps.Engine.AlertsTotal(),

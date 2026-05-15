@@ -1,9 +1,9 @@
+//go:build linux
+
 package enforcement
 
-// Tests que requieren binarios del sistema operativo.
-// Usan scripts shell falsos en directorios temporales para simular
-// firewall-cmd, zmprov, postmap, postqueue y postsuper sin depender
-// de que estén instalados en el entorno de CI.
+// Tests que requieren scripts shell y binarios de Linux (firewall-cmd, zmprov, etc.).
+// Solo se compilan y ejecutan en Linux.
 
 import (
 	"context"
@@ -135,7 +135,7 @@ func TestBlock_Valid(t *testing.T) {
 	prependPath(t, binDir)
 
 	e := New(Config{BanSeconds: 60})
-	if err := e.Block(context.Background(), "5.5.5.5"); err != nil {
+	if err := e.Block(context.Background(), "5.5.5.5", 0); err != nil {
 		t.Errorf("Block: %v", err)
 	}
 	blocked := e.BlockedIPs()

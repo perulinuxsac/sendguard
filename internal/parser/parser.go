@@ -44,6 +44,12 @@ var (
 		`^(\w+):\s+client=\S+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\].*?sasl_username=([^\s,]+)`,
 	)
 
+	// ABCDEF1234: filter: RCPT from unknown[1.2.3.4]: <sender@domain>: ...
+	// Captura cada destinatario añadido en una sesión autenticada (spam masivo, content filter).
+	reRcptFilter = regexp.MustCompile(
+		`^(\w+): filter: RCPT from \S+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]: <([^>]+)>:`,
+	)
+
 	// ABCDEF1234: from=<user@domain.com>, size=1234, nrcpt=2 (queue active)
 	// \s* en vez de \s+ porque algunos transportes omiten el espacio tras la coma.
 	reQmgrFrom = regexp.MustCompile(
@@ -73,24 +79,64 @@ var reMailboxHeader = regexp.MustCompile(
 )
 
 var (
-	// "authentication failed for [user@domain.com] (invalid password)"
+	// "authentication failed for [user@domain.com] (invalid password)"  — IMAP/POP3/SOAP
 	reMailboxFail = regexp.MustCompile(
 		`^authentication failed for \[([^\]]+)\]`,
 	)
 
-	// "user user@domain.com authenticated, mechanism=LOGIN [TLS]"
+	// "user user@domain.com authenticated, mechanism=LOGIN [TLS]"  — IMAP/POP3/SOAP
 	reMailboxSuccess = regexp.MustCompile(
 		`^user\s+(\S+@\S+)\s+authenticated`,
+	)
+
+	// "Authentication successful for user: user@domain.com"  — protocolo "account" (admin SOAP, ActiveSync, etc.)
+	reAccountSuccess = regexp.MustCompile(
+		`^Authentication successful for user:\s+(\S+)`,
+	)
+
+	// "authentication failed for user user@domain.com: ..."  — protocolo "account"
+	// Zimbra también puede emitir: "Authentication failed for [user@domain.com]"
+	reAccountFail = regexp.MustCompile(
+		`^[Aa]uthentication failed for(?:\s+user)?\s+[\[]?([^\]:,\s]+)`,
 	)
 )
 
 // ── Parser ───────────────────────────────────────────────────────────────────
 
+// queueTTL es el tiempo máximo que un queue ID autenticado permanece en caché
+// sin que llegue el evento qmgr correspondiente. Evita la acumulación de memoria
+// si el mensaje es rechazado o descartado antes de entrar en cola.
+const queueTTL = 10 * time.Minute
+
+// pruneEveryQueues controla cada cuántas llamadas a parseQmgr se limpian entradas expiradas.
+const pruneEveryQueues = 500
+
+// senderEntry asocia un remitente autenticado con su timestamp de entrada en cola.
+// Se usa para correlacionar eventos de bounce con la cuenta que envió el mensaje.
+type senderEntry struct {
+	account string
+	ts      time.Time
+}
+
 // Parser convierte líneas de log en eventos tipados.
-type Parser struct{}
+// Es stateful: mantiene dos mapas de queue IDs:
+//   - authedQueues: QIDs entre auth SASL y qmgr (correo saliente en tránsito)
+//   - queueSenders: QIDs ya en cola → cuenta remitente (para correlacionar bounces)
+//
+// Solo ParseLine accede a estos mapas; no hay acceso concurrente.
+type Parser struct {
+	authedQueues map[string]time.Time  // queueID → timestamp de auth SASL
+	queueSenders map[string]senderEntry // queueID → cuenta del remitente autenticado
+	queueCallCnt int
+}
 
 // New crea un Parser listo para usar.
-func New() *Parser { return &Parser{} }
+func New() *Parser {
+	return &Parser{
+		authedQueues: make(map[string]time.Time),
+		queueSenders: make(map[string]senderEntry),
+	}
+}
 
 // ParseLine extrae un evento de una línea de /var/log/mail.log (Postfix/syslog).
 // Retorna (event, true) si la línea produce un evento relevante.
@@ -151,10 +197,12 @@ func (p *Parser) ParseMailboxLine(line string) (event.Event, bool) {
 		Raw:       line,
 	}
 
-	// Protocolos de interés: IMAP, POP3, SOAP (webmail/ActiveSync).
+	// Protocolos de interés: IMAP, POP3, SOAP (webmail), account (admin SOAP/ActiveSync).
 	switch strings.ToLower(protocol) {
 	case "imap", "pop3", "soap":
 		return p.parseMailboxProtocol(ev, msg)
+	case "account":
+		return p.parseAccountProtocol(ev, msg)
 	}
 
 	return event.Event{}, false
@@ -184,20 +232,73 @@ func (p *Parser) parseMailboxProtocol(ev event.Event, msg string) (event.Event, 
 	return event.Event{}, false
 }
 
+// parseAccountProtocol maneja el protocolo "account" de mailbox.log.
+// Cubre autenticaciones vía Admin SOAP (puerto 7073), ActiveSync y similares.
+// Los mensajes usan capitalización distinta a los de IMAP/POP3.
+func (p *Parser) parseAccountProtocol(ev event.Event, msg string) (event.Event, bool) {
+	if m := reAccountSuccess.FindStringSubmatch(msg); m != nil {
+		ev.Type = event.AuthSuccess
+		ev.Account = m[1]
+		ev.Domain = extractDomain(m[1])
+		return ev, true
+	}
+
+	if m := reAccountFail.FindStringSubmatch(msg); m != nil {
+		ev.Type = event.AuthFailed
+		account := strings.Trim(m[1], "[]")
+		if ev.Account == "" && account != "" {
+			ev.Account = account
+			ev.Domain = extractDomain(account)
+		}
+		return ev, true
+	}
+
+	return event.Event{}, false
+}
+
 // ── Helpers de mail.log ──────────────────────────────────────────────────────
 
 func (p *Parser) parseSmtpd(ev event.Event, msg string) (event.Event, bool) {
 	if m := reSaslFail.FindStringSubmatch(msg); m != nil {
 		ev.Type = event.AuthFailed
 		ev.IP = m[1]
-		if m[2] != "" {
-			ev.Extra = map[string]string{"reason": m[2]}
+		reason := m[2]
+		if reason != "" {
+			ev.Extra = map[string]string{"reason": reason}
+			// Postfix moderno añade "sasl_username=X" al reason. Extraerlo si está presente.
+			if i := strings.Index(reason, "sasl_username="); i >= 0 {
+				username := reason[i+len("sasl_username="):]
+				if j := strings.IndexAny(username, " ,;"); j >= 0 {
+					username = username[:j]
+				}
+				if username != "" {
+					ev.Account = username
+					ev.Domain = extractDomain(username)
+				}
+			}
 		}
 		return ev, true
 	}
 
 	if m := reSaslSuccess.FindStringSubmatch(msg); m != nil {
 		ev.Type = event.AuthSuccess
+		ev.QueueID = m[1]
+		ev.IP = m[2]
+		ev.Account = m[3]
+		ev.Domain = extractDomain(m[3])
+		// Marcar el queue ID como autenticado para que parseQmgr y reRcptFilter
+		// sepan que este mensaje es saliente (no correo entrante por MX).
+		p.authedQueues[m[1]] = ev.Timestamp
+		return ev, true
+	}
+
+	if m := reRcptFilter.FindStringSubmatch(msg); m != nil {
+		// Solo emitir RecipientAdded para conexiones autenticadas.
+		// Las entregas MX entrantes (ej: sunat.gob.pe) no pasan por SASL.
+		if _, ok := p.authedQueues[m[1]]; !ok {
+			return event.Event{}, false
+		}
+		ev.Type = event.RecipientAdded
 		ev.QueueID = m[1]
 		ev.IP = m[2]
 		ev.Account = m[3]
@@ -214,15 +315,59 @@ func (p *Parser) parseQmgr(ev event.Event, msg string) (event.Event, bool) {
 		return event.Event{}, false
 	}
 
+	queueID := m[1]
+
+	// Verificar si el mensaje fue enviado por un usuario autenticado vía SASL.
+	// Los mensajes entrantes por MX (ej: sunat.gob.pe enviando a clientes locales)
+	// NO tienen entrada en authedQueues y deben ignorarse para evitar falsos positivos.
+	authTS, authed := p.authedQueues[queueID]
+	if authed {
+		delete(p.authedQueues, queueID)
+	}
+
+	// Purga lazy: eliminar queue IDs autenticados que nunca llegaron a qmgr (rechazados, etc.)
+	p.queueCallCnt++
+	if p.queueCallCnt >= pruneEveryQueues {
+		p.queueCallCnt = 0
+		p.pruneQueues(ev.Timestamp)
+	}
+
+	if !authed {
+		return event.Event{}, false
+	}
+
 	ev.Type = event.QueueAccepted
-	ev.QueueID = m[1]
+	ev.QueueID = queueID
 	ev.Account = m[2]
 	ev.Domain = extractDomain(m[2])
 	ev.Extra = map[string]string{
 		"size":  m[3],
 		"nrcpt": m[4],
 	}
+	// Guardar cuenta para correlacionar bounces posteriores en parseDelivery.
+	if m[2] != "" {
+		p.queueSenders[queueID] = senderEntry{account: m[2], ts: authTS}
+	}
 	return ev, true
+}
+
+// pruneQueues elimina queue IDs expirados de ambos mapas.
+// authedQueues: TTL corto (queueTTL=10 min) — cubre el tiempo entre auth y qmgr.
+// queueSenders: TTL largo (30 min) — cubre mensajes con muchos destinatarios
+// cuyas entregas se distribuyen en el tiempo.
+func (p *Parser) pruneQueues(now time.Time) {
+	cutoff := now.Add(-queueTTL)
+	for qid, ts := range p.authedQueues {
+		if ts.Before(cutoff) {
+			delete(p.authedQueues, qid)
+		}
+	}
+	senderCutoff := now.Add(-30 * time.Minute)
+	for qid, entry := range p.queueSenders {
+		if entry.ts.Before(senderCutoff) {
+			delete(p.queueSenders, qid)
+		}
+	}
 }
 
 func (p *Parser) parseDelivery(ev event.Event, msg string) (event.Event, bool) {
@@ -242,6 +387,11 @@ func (p *Parser) parseDelivery(ev event.Event, msg string) (event.Event, bool) {
 		ev.Type = event.MessageSent
 	case "bounced":
 		ev.Type = event.MessageBounce
+		// Correlacionar bounce con la cuenta del remitente autenticado.
+		if entry, ok := p.queueSenders[m[1]]; ok {
+			ev.Account = entry.account
+			ev.Domain = extractDomain(entry.account)
+		}
 	case "deferred":
 		ev.Type = event.MessageDeferred
 	default:

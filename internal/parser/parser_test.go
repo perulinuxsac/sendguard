@@ -113,13 +113,11 @@ func TestParseLine(t *testing.T) {
 			},
 		},
 		{
-			name:   "qmgr bounce (from vacío) → sigue siendo QueueAccepted",
+			// NDR / bounce de Postfix: from=<> no tiene SASL auth previa → ignorar
+			// para evitar falsos positivos en number_messages con correo de retorno.
+			name:   "qmgr NDR (from vacío) sin auth previa → ignorar",
 			line:   `May 11 10:23:46 mail postfix/qmgr[5678]: BCDEF1234567: from=<>, size=512, nrcpt=1 (queue active)`,
-			wantOK: true,
-			wantEv: event.Event{
-				Type:    event.QueueAccepted,
-				QueueID: "BCDEF1234567",
-			},
+			wantOK: false,
 		},
 
 		// --- MessageSent / Bounce / Deferred ---
@@ -358,6 +356,66 @@ func TestParseMailboxTimestampZone(t *testing.T) {
 	}
 	if ev.Timestamp.Hour() != 10 {
 		t.Errorf("Hour: got %d, want 10", ev.Timestamp.Hour())
+	}
+}
+
+// ── Tests de correlación bounce ──────────────────────────────────────────────
+
+// TestBounceCorrelation verifica que un bounce recibe la cuenta del remitente
+// autenticado vía SASL, lo que permite que bouncerate detecte cuentas comprometidas.
+func TestBounceCorrelation(t *testing.T) {
+	p := parser.New()
+
+	// 1. Auth SASL exitosa — registra QUEUEABC en authedQueues
+	authLine := `May 11 10:00:00 mail postfix/smtps/smtpd[1]: QUEUEABC: client=unknown[1.2.3.4], sasl_method=PLAIN, sasl_username=spammer@domain.com`
+	_, ok := p.ParseLine(authLine)
+	if !ok {
+		t.Fatal("auth line debe parsear ok")
+	}
+
+	// 2. qmgr acepta — mueve QUEUEABC de authedQueues a queueSenders
+	qmgrLine := `May 11 10:00:01 mail postfix/qmgr[2]: QUEUEABC: from=<spammer@domain.com>, size=1024, nrcpt=1 (queue active)`
+	qmgrEv, ok := p.ParseLine(qmgrLine)
+	if !ok {
+		t.Fatal("qmgr line debe parsear ok")
+	}
+	if qmgrEv.Type != event.QueueAccepted {
+		t.Fatalf("qmgr: Type got %q, want QueueAccepted", qmgrEv.Type)
+	}
+
+	// 3. Entrega rebotada — debe correlacionar Account desde queueSenders
+	bounceLine := `May 11 10:00:02 mail postfix/smtp[3]: QUEUEABC: to=<bad@notexist.com>, relay=notexist.com[9.9.9.9]:25, delay=2, delays=0.1/0/0.3/1.6, dsn=5.1.1, status=bounced (user unknown)`
+	bounceEv, ok := p.ParseLine(bounceLine)
+	if !ok {
+		t.Fatal("bounce delivery line debe parsear ok")
+	}
+	if bounceEv.Type != event.MessageBounce {
+		t.Fatalf("bounce: Type got %q, want MessageBounce", bounceEv.Type)
+	}
+	if bounceEv.Account != "spammer@domain.com" {
+		t.Errorf("bounce: Account got %q, want spammer@domain.com (correlación con SASL auth)", bounceEv.Account)
+	}
+	if bounceEv.Domain != "domain.com" {
+		t.Errorf("bounce: Domain got %q, want domain.com", bounceEv.Domain)
+	}
+}
+
+// TestBounceWithoutAuth verifica que un bounce de correo no autenticado (entrante MX)
+// no recibe Account — sin correlación no hay false positives en bouncerate.
+func TestBounceWithoutAuth(t *testing.T) {
+	p := parser.New()
+
+	// Bounce de correo entrante: no hay SASL auth, QUEUEMX no está en queueSenders
+	bounceLine := `May 11 10:00:05 mail postfix/smtp[9]: QUEUEMX1: to=<user@domain.com>, relay=domain.com[1.2.3.4]:25, delay=1, delays=0.1/0/0.3/0.6, dsn=5.1.1, status=bounced (user unknown)`
+	ev, ok := p.ParseLine(bounceLine)
+	if !ok {
+		t.Fatal("bounce line debe parsear ok (siempre emitimos MessageBounce/Sent/Deferred)")
+	}
+	if ev.Type != event.MessageBounce {
+		t.Fatalf("Type got %q, want MessageBounce", ev.Type)
+	}
+	if ev.Account != "" {
+		t.Errorf("Account got %q, want \"\" (correo sin auth no debe tener remitente correlacionado)", ev.Account)
 	}
 }
 

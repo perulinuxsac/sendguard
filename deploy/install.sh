@@ -179,6 +179,16 @@ CTRL_KEY=""
 [[ -n "$CTRL_URL" ]] && ask "API Key del Controller"  ""  CTRL_KEY
 
 echo ""
+info "Notificaciones por Email (usa sendmail de Zimbra — sin configuración SMTP)"
+ask "Correo remitente (from, vacío para omitir)"  ""  EMAIL_FROM
+EMAIL_TO=""
+[[ -n "$EMAIL_FROM" ]] && ask "Destinatarios (separados por coma)"  ""  EMAIL_TO
+
+echo ""
+info "AbuseIPDB (enriquece alertas con reputación de IPs — registro gratuito en abuseipdb.com)"
+ask "API Key de AbuseIPDB (vacío para omitir)"  ""  ABUSEIPDB_KEY
+
+echo ""
 info "GeoIP local MaxMind (recomendado para producción, evita rate-limits)"
 info "Registro gratuito en: https://www.maxmind.com/en/geolite2/signup"
 info "Account ID y License Key se encuentran en: maxmind.com → My Account → Manage License Keys"
@@ -220,9 +230,22 @@ fi
 MAILBOX_LINE=""
 [[ -n "$MAILBOX_LOG" ]] && MAILBOX_LINE="    mailbox: \"$MAILBOX_LOG\""
 
+# Convertir destinatarios email a lista YAML
+EMAIL_TO_YAML=""
+if [[ -n "$EMAIL_TO" ]]; then
+    IFS=',' read -ra TO_ARR <<< "$EMAIL_TO"
+    for addr in "${TO_ARR[@]}"; do
+        addr="${addr// /}"
+        EMAIL_TO_YAML+=$'\n    - "'"$addr"'"'
+    done
+fi
+
 # Pre-asignar defaults aquí: $'...' no se expande dentro de heredoc
 [[ -z "$ACCTS_YAML" ]] && ACCTS_YAML=$'\n    []'
 [[ -z "$IPS_YAML" ]]   && IPS_YAML=$'\n    []'
+
+mkdir -p /etc/sendguard "$DB_DIR"
+chmod 750 /etc/sendguard "$DB_DIR"
 
 # Descargar GeoLite2-Country.mmdb si se proporcionó license key
 MMDB_PATH=""
@@ -251,9 +274,6 @@ if [[ -n "$MM_ACCOUNT_ID" && -n "$MM_LICENSE_KEY" ]]; then
         ok "Cron de actualización GeoIP instalado (jueves 3am)"
     fi
 fi
-
-mkdir -p /etc/sendguard "$DB_DIR"
-chmod 750 /etc/sendguard "$DB_DIR"
 
 cat > "$CONFIG_FILE" << YAML
 server_id: "${SERVER_ID}"
@@ -285,6 +305,21 @@ rules:
     scan_time: 300
   impossible_traveler:
     window_minutes: 30
+    # trusted_orgs: detección por nombre de organización via ipinfo.io (recomendado).
+    # Cubre TODAS las IPs de cada proveedor sin importar cuántas tengan.
+    trusted_orgs:
+      - "MICROSOFT"   # Outlook Mobile, Exchange Online, Azure
+      - "GOOGLE"      # Gmail Mobile, Google Workspace
+      - "APPLE"       # iCloud Mail, Apple Mail Mobile
+      - "AMAZON"      # AWS SES, WorkMail
+    # trusted_cidrs: red de seguridad para modo DB local (sin llamadas a ipinfo.io).
+    # Solo los rangos principales de Exchange Online para IMAP/SMTP proxy.
+    trusted_cidrs:
+      - "52.96.0.0/14"    # Exchange Online
+      - "52.100.0.0/14"   # Exchange Online
+      - "52.104.0.0/14"   # Exchange Online
+      - "52.108.0.0/14"   # Exchange Online
+      - "104.47.0.0/17"   # Exchange Online Protection
   queue_monitor:
     queue_threshold: 2500
     scan_time: 3600
@@ -312,10 +347,17 @@ firewall:
 api:
   listen: "${API_ADDR}"
 
+abuseipdb:
+  api_key: "${ABUSEIPDB_KEY}"
+  cache_ttl: 24
+
 notification:
   telegram:
     token: "${TG_TOKEN}"
     chat_id: "${TG_CHAT_ID}"
+  email:
+    from: "${EMAIL_FROM}"
+    to:${EMAIL_TO_YAML}
 
 whitelist:
   accounts:${ACCTS_YAML}

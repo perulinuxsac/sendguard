@@ -220,12 +220,14 @@ func TestDrainLinesServerRellena(t *testing.T) {
 	}
 }
 
-func TestDrainLinesServerNoSobreescribe(t *testing.T) {
-	// Cuando parseFn ya rellena Server, el watcher no debe sobreescribir.
+func TestDrainLinesServerSobreescribe(t *testing.T) {
+	// El server ID configurado en el watcher siempre sobreescribe el que
+	// parseFn extrae del hostname del log. Esto garantiza que el server_id
+	// del agent.yaml (FQDN) se use en todos los eventos, no el hostname corto.
 	parseConServer := func(line string) (event.Event, bool) {
 		return event.Event{
 			Type:      event.AuthFailed,
-			Server:    "original.server",
+			Server:    "short-hostname",
 			Timestamp: time.Now(),
 			Raw:       line,
 		}, true
@@ -235,14 +237,14 @@ func TestDrainLinesServerNoSobreescribe(t *testing.T) {
 	defer f.Close()
 
 	ch := make(chan event.Event, 10)
-	w := New(f.Name(), parseConServer, "override.server", ch)
+	w := New(f.Name(), parseConServer, "mail.perulinux.pe", ch)
 	w.drainLines(f)
 
 	if len(ch) != 1 {
 		t.Fatalf("got %d eventos, want 1", len(ch))
 	}
 	ev := <-ch
-	if ev.Server != "original.server" {
-		t.Errorf("Server: got %q, want \"original.server\" (no debe sobreescribir)", ev.Server)
+	if ev.Server != "mail.perulinux.pe" {
+		t.Errorf("Server: got %q, want \"mail.perulinux.pe\" (watcher debe sobreescribir con FQDN)", ev.Server)
 	}
 }

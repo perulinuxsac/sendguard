@@ -1,13 +1,16 @@
 // Package saslconnections detecta abuso de conexiones SASL autenticadas.
 //
-// Un usuario legítimo rara vez abre más de 1-2 sesiones SMTP autenticadas
-// simultáneas. Un botnet usando una cuenta comprometida generará muchas
-// conexiones autenticadas en paralelo desde IPs distintas (credential stuffing
-// con éxito distribuido). Este módulo detecta ese patrón contando eventos
-// AuthSuccess por cuenta en una ventana deslizante.
+// Dos señales de detección:
+//
+//  1. MaxUniqueIPs: N IPs distintas autentican como la misma cuenta en la ventana
+//     → cuenta comprometida usada por botnet distribuido.
+//     Acción: ActionSuspendAcct + ActionBlockIP por cada IP única (score 90).
+//
+//  2. Max: exceso de conexiones totales de la misma cuenta en la ventana
+//     → botnet usando pocos nodos o una sola IP de forma intensiva.
+//     Acción: ActionSuspendAcct (score 65).
 //
 // Fuente: eventos AuthSuccess (postfix/smtpd con sasl_username).
-// Acción: suspensión de cuenta (ActionSuspendAcct), score 65.
 package saslconnections
 
 import (
@@ -20,12 +23,12 @@ import (
 
 // Config agrupa los parámetros del módulo.
 type Config struct {
-	Max      int           // número de conexiones SASL autenticadas en la ventana para disparar alerta
-	ScanTime time.Duration // ventana de observación
+	Max          int           // conexiones autenticadas totales por cuenta en ventana (0 = deshabilitado)
+	MaxUniqueIPs int           // IPs distintas por cuenta en ventana para bloquear (0 = deshabilitado)
+	ScanTime     time.Duration // ventana de observación
 }
 
-// connection registra una conexión SASL autenticada con la IP de origen,
-// útil para incluirla en el contexto de la alerta.
+// connection registra una conexión SASL autenticada.
 type connection struct {
 	ts time.Time
 	ip string
@@ -53,8 +56,6 @@ func New(cfg Config) *Module {
 func (m *Module) Name() string { return "sasl_connections" }
 
 // Handle procesa un evento. Solo actúa sobre AuthSuccess con cuenta conocida.
-// Retorna una alerta con ActionSuspendAcct cuando la cuenta supera Max conexiones
-// autenticadas en ScanTime.
 func (m *Module) Handle(ev event.Event) []detection.Alert {
 	if ev.Type != event.AuthSuccess || ev.Account == "" {
 		return nil
@@ -72,35 +73,73 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 		m.pruneExpired(cutoff)
 	}
 
-	if len(current) < m.cfg.Max {
-		return nil
+	// Señal 1: múltiples IPs distintas autenticando la misma cuenta (toma de control distribuida).
+	if m.cfg.MaxUniqueIPs > 0 {
+		ips := uniqueIPs(current)
+		if len(ips) >= m.cfg.MaxUniqueIPs {
+			delete(m.windows, ev.Account)
+			score := 90
+			reason := fmt.Sprintf(
+				"%d IPs distintas autenticaron como %s en %s (umbral: %d) — cuenta comprometida distribuida",
+				len(ips), ev.Account, m.cfg.ScanTime.String(), m.cfg.MaxUniqueIPs,
+			)
+			alerts := make([]detection.Alert, 0, 1+len(ips))
+			alerts = append(alerts, detection.Alert{
+				Module:    m.Name(),
+				Score:     score,
+				Severity:  detection.SeverityFromScore(score),
+				Action:    detection.ActionSuspendAcct,
+				Timestamp: ev.Timestamp,
+				Server:    ev.Server,
+				IP:        ev.IP,
+				Account:   ev.Account,
+				Domain:    ev.Domain,
+				Reasons:   []string{reason},
+			})
+			for _, ip := range ips {
+				alerts = append(alerts, detection.Alert{
+					Module:    m.Name(),
+					Score:     score,
+					Severity:  detection.SeverityFromScore(score),
+					Action:    detection.ActionBlockIP,
+					Timestamp: ev.Timestamp,
+					Server:    ev.Server,
+					IP:        ip,
+					Account:   ev.Account,
+					Domain:    ev.Domain,
+					Reasons:   []string{reason},
+				})
+			}
+			return alerts
+		}
 	}
 
-	// Umbral superado. Borramos el registro para acumular desde cero
-	// si la cuenta es reactivada tras la suspensión.
-	delete(m.windows, ev.Account)
+	// Señal 2: exceso de conexiones totales (botnet concentrado).
+	if m.cfg.Max > 0 && len(current) >= m.cfg.Max {
+		delete(m.windows, ev.Account)
+		score := 65
+		reason := fmt.Sprintf(
+			"%d conexiones SASL autenticadas de %s en %s (umbral: %d)",
+			len(current),
+			ev.Account,
+			m.cfg.ScanTime.String(),
+			m.cfg.Max,
+		)
+		return []detection.Alert{{
+			Module:    m.Name(),
+			Score:     score,
+			Severity:  detection.SeverityFromScore(score),
+			Action:    detection.ActionSuspendAcct,
+			Timestamp: ev.Timestamp,
+			Server:    ev.Server,
+			IP:        ev.IP,
+			Account:   ev.Account,
+			Domain:    ev.Domain,
+			Reasons:   []string{reason},
+		}}
+	}
 
-	score := 65
-	reason := fmt.Sprintf(
-		"%d conexiones SASL autenticadas de %s en %s (umbral: %d)",
-		len(current),
-		ev.Account,
-		m.cfg.ScanTime.String(),
-		m.cfg.Max,
-	)
-
-	return []detection.Alert{{
-		Module:    m.Name(),
-		Score:     score,
-		Severity:  detection.SeverityFromScore(score),
-		Action:    detection.ActionSuspendAcct,
-		Timestamp: ev.Timestamp,
-		Server:    ev.Server,
-		IP:        ev.IP, // IP de la conexión que cruzó el umbral
-		Account:   ev.Account,
-		Domain:    ev.Domain,
-		Reasons:   []string{reason},
-	}}
+	return nil
 }
 
 // pruneExpired elimina del map las cuentas cuya ventana quedó vacía.
@@ -112,8 +151,22 @@ func (m *Module) pruneExpired(cutoff time.Time) {
 	}
 }
 
+// uniqueIPs retorna la lista deduplicada de IPs no vacías en las conexiones.
+func uniqueIPs(conns []connection) []string {
+	seen := make(map[string]struct{}, len(conns))
+	result := make([]string, 0, len(conns))
+	for _, c := range conns {
+		if c.ip != "" {
+			if _, ok := seen[c.ip]; !ok {
+				seen[c.ip] = struct{}{}
+				result = append(result, c.ip)
+			}
+		}
+	}
+	return result
+}
+
 // trimOld elimina conexiones anteriores a cutoff.
-// Las conexiones se asumen ordenadas cronológicamente.
 func trimOld(conns []connection, cutoff time.Time) []connection {
 	i := 0
 	for i < len(conns) && conns[i].ts.Before(cutoff) {

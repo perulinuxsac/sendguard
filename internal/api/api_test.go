@@ -27,13 +27,14 @@ type mockEnforcer struct {
 	blockErr      error
 }
 
-func (m *mockEnforcer) BlockedIPs() []enforcement.BlockedIPInfo { return m.blocked }
-func (m *mockEnforcer) Stats() enforcement.EnforcerStats        { return m.stats }
+func (m *mockEnforcer) BlockedIPs() []enforcement.BlockedIPInfo            { return m.blocked }
+func (m *mockEnforcer) SuspendedAccounts() []enforcement.SuspendedAcctInfo { return nil }
+func (m *mockEnforcer) Stats() enforcement.EnforcerStats                   { return m.stats }
 func (m *mockEnforcer) Unblock(_ context.Context, ip string) error {
 	m.unblockCalled = ip
 	return m.unblockErr
 }
-func (m *mockEnforcer) Block(_ context.Context, ip string) error {
+func (m *mockEnforcer) Block(_ context.Context, ip string, _ int) error {
 	m.blockCalled = ip
 	return m.blockErr
 }

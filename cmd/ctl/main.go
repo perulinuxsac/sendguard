@@ -140,6 +140,11 @@ func cmdStatus(cli *apiClient) error {
 			Module    string    `json:"module"`
 			TTL       string    `json:"ttl"`
 		} `json:"blocked_ips"`
+		SuspendedAccounts []struct {
+			Account   string    `json:"account"`
+			Module    string    `json:"module"`
+			Timestamp time.Time `json:"timestamp"`
+		} `json:"suspended_accounts"`
 		Stats struct {
 			EventsTotal      int64 `json:"events_total"`
 			AlertsTotal      int64 `json:"alerts_total"`
@@ -163,17 +168,32 @@ func cmdStatus(cli *apiClient) error {
 
 	if len(body.BlockedIPs) == 0 {
 		fmt.Println("No hay IPs bloqueadas actualmente.")
-		return nil
+	} else {
+		fmt.Printf("IPs bloqueadas (%d):\n", len(body.BlockedIPs))
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+		fmt.Fprintf(w, "  IP\tMódulo\tTTL restante\n")
+		fmt.Fprintf(w, "  --\t------\t------------\n")
+		for _, b := range body.BlockedIPs {
+			fmt.Fprintf(w, "  %s\t%s\t%s\n", b.IP, b.Module, b.TTL)
+		}
+		w.Flush()
 	}
 
-	fmt.Printf("IPs bloqueadas (%d):\n", len(body.BlockedIPs))
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintf(w, "  IP\tMódulo\tTTL restante\n")
-	fmt.Fprintf(w, "  --\t------\t------------\n")
-	for _, b := range body.BlockedIPs {
-		fmt.Fprintf(w, "  %s\t%s\t%s\n", b.IP, b.Module, b.TTL)
+	fmt.Println()
+
+	if len(body.SuspendedAccounts) == 0 {
+		fmt.Println("No hay cuentas suspendidas actualmente.")
+	} else {
+		fmt.Printf("Cuentas suspendidas (%d):\n", len(body.SuspendedAccounts))
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+		fmt.Fprintf(w, "  Cuenta\tMódulo\tHora\n")
+		fmt.Fprintf(w, "  ------\t------\t----\n")
+		for _, a := range body.SuspendedAccounts {
+			fmt.Fprintf(w, "  %s\t%s\t%s\n", a.Account, a.Module, a.Timestamp.Local().Format("15:04:05"))
+		}
+		w.Flush()
 	}
-	w.Flush()
+
 	return nil
 }
 

@@ -18,15 +18,18 @@ import (
 	"github.com/perulinux/sendguard/internal/version"
 	"github.com/perulinux/sendguard/internal/detection/authfailed"
 	"github.com/perulinux/sendguard/internal/detection/bouncerate"
+	"github.com/perulinux/sendguard/internal/detection/distbrute"
 	"github.com/perulinux/sendguard/internal/detection/domaindiscovery"
 	"github.com/perulinux/sendguard/internal/detection/impossibletraveler"
 	"github.com/perulinux/sendguard/internal/detection/numbermessages"
 	"github.com/perulinux/sendguard/internal/detection/queuemonitor"
+	"github.com/perulinux/sendguard/internal/detection/rcptflood"
 	"github.com/perulinux/sendguard/internal/detection/saslconnections"
 	"github.com/perulinux/sendguard/internal/enforcement"
 	"github.com/perulinux/sendguard/internal/event"
 	"github.com/perulinux/sendguard/internal/geoip"
 	"github.com/perulinux/sendguard/internal/notify"
+	"github.com/perulinux/sendguard/internal/notify/email"
 	"github.com/perulinux/sendguard/internal/notify/telegram"
 	"github.com/perulinux/sendguard/internal/notify/webhook"
 	"github.com/perulinux/sendguard/internal/parser"
@@ -89,12 +92,21 @@ func main() {
 	})
 
 	saslConns := saslconnections.New(saslconnections.Config{
-		Max:      cfg.Rules.SaslConnections.Max,
-		ScanTime: time.Duration(cfg.Rules.SaslConnections.ScanTime) * time.Second,
+		Max:          cfg.Rules.SaslConnections.Max,
+		MaxUniqueIPs: cfg.Rules.SaslConnections.MaxUniqueIPs,
+		ScanTime:     time.Duration(cfg.Rules.SaslConnections.ScanTime) * time.Second,
+	})
+
+	distBrute := distbrute.New(distbrute.Config{
+		MaxIPs:   cfg.Rules.DistBrute.MaxIPs,
+		ScanTime: time.Duration(cfg.Rules.DistBrute.ScanTime) * time.Second,
 	})
 
 	impossTravel := impossibletraveler.New(impossibletraveler.Config{
-		WindowMinutes: cfg.Rules.ImpossibleTraveler.WindowMinutes,
+		WindowMinutes:    cfg.Rules.ImpossibleTraveler.WindowMinutes,
+		AllowedCountries: cfg.GeoIP.AllowedCountries,
+		TrustedCIDRs:     cfg.Rules.ImpossibleTraveler.TrustedCIDRs,
+		TrustedOrgs:      cfg.Rules.ImpossibleTraveler.TrustedOrgs,
 	}, geoResolver)
 
 	queueMon := queuemonitor.New(queuemonitor.Config{
@@ -112,8 +124,13 @@ func main() {
 		ScanTime:   time.Duration(cfg.Rules.BounceRate.ScanTime) * time.Second,
 	})
 
+	rcptFlood := rcptflood.New(rcptflood.Config{
+		MaxRecipients: cfg.Rules.RcptFlood.MaxRecipients,
+		ScanTime:      time.Duration(cfg.Rules.RcptFlood.ScanTime) * time.Second,
+	})
+
 	// Engine: distribuye eventos a los módulos
-	engine := detection.NewEngine(alertCh, wl, authFailed, numberMessages, saslConns, impossTravel, queueMon, domainDisc, bounceRate)
+	engine := detection.NewEngine(alertCh, wl, authFailed, numberMessages, saslConns, impossTravel, queueMon, domainDisc, bounceRate, rcptFlood, distBrute)
 
 	// Notifier: construir canales activos según config
 	var notifiers []notify.Notifier
@@ -132,6 +149,15 @@ func main() {
 			Timeout: whCfg.Timeout,
 		}))
 		slog.Info("notificaciones webhook activadas", "url", whCfg.URL)
+	}
+	emailCfg := cfg.Notification.Email
+	if emailCfg.From != "" && len(emailCfg.To) > 0 {
+		notifiers = append(notifiers, email.New(email.Config{
+			From:        emailCfg.From,
+			To:          emailCfg.To,
+			SendmailBin: emailCfg.SendmailBin,
+		}))
+		slog.Info("notificaciones email activadas", "from", emailCfg.From, "to", emailCfg.To)
 	}
 
 	// Cliente AbuseIPDB (opcional)
@@ -204,6 +230,7 @@ func main() {
 	enforcer := enforcement.New(enforcement.Config{
 		FirewallBackend: cfg.Firewall.Backend,
 		BanSeconds:      cfg.Firewall.BanSeconds,
+		ZmprovBin:       cfg.Zimbra.ZmprovBin,
 		PostfixSbin:     cfg.Zimbra.PostfixSbin,
 		PostfixConf:     cfg.Zimbra.PostfixConf,
 		Notifier:        notify.NewMulti(notifiers...),
@@ -220,7 +247,7 @@ func main() {
 	p := parser.New()
 
 	// mail.log — SMTP/SASL (obligatorio)
-	go watcher.New(cfg.Zimbra.Logs.Main, p.ParseLine, "", eventCh).Run(ctx)
+	go watcher.New(cfg.Zimbra.Logs.Main, p.ParseLine, cfg.ServerID, eventCh).Run(ctx)
 
 	// mailbox.log — IMAP/POP3/SOAP (opcional; si está vacío en config, no se inicia)
 	if cfg.Zimbra.Logs.Mailbox != "" {

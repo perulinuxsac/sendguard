@@ -12,6 +12,7 @@ const (
 	MessageSent     Type = "message_sent"     // smtp: entrega exitosa (status=sent)
 	MessageBounce   Type = "message_bounce"   // smtp: rebote (status=bounced)
 	MessageDeferred Type = "message_deferred" // smtp: diferido (status=deferred)
+	RecipientAdded  Type = "recipient_added"  // smtpd filter: RCPT — destinatario en sesión autenticada
 )
 
 // Event representa un evento de seguridad parseado desde el maillog.

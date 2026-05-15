@@ -30,6 +30,7 @@ type AlertForwarder interface {
 type Config struct {
 	FirewallBackend string            // "firewalld" (RHEL) o "ufw" (Ubuntu); default: firewalld
 	BanSeconds      int               // duración del bloqueo de IP (0 = permanente)
+	ZmprovBin       string            // ruta completa a zmprov (default: /opt/zimbra/bin/zmprov)
 	PostfixSbin     string            // /opt/zimbra/common/sbin — binarios de Postfix de Zimbra
 	PostfixConf     string            // /opt/zimbra/common/conf — config de Postfix de Zimbra
 	Notifier        notify.Notifier   // nil usa Noop (sin notificaciones)
@@ -46,6 +47,19 @@ type blockedIP struct {
 	module string
 }
 
+// suspendedAcct registra una cuenta suspendida por el agente.
+type suspendedAcct struct {
+	module    string
+	timestamp time.Time
+}
+
+// SuspendedAcctInfo describe una cuenta suspendida actualmente.
+type SuspendedAcctInfo struct {
+	Account   string
+	Module    string
+	Timestamp time.Time
+}
+
 // EnforcerStats agrupa los contadores de acciones ejecutadas.
 type EnforcerStats struct {
 	BlocksTotal      int64
@@ -56,13 +70,14 @@ type EnforcerStats struct {
 // Enforcer recibe alertas del Engine y ejecuta acciones de contención.
 // Es thread-safe.
 type Enforcer struct {
-	cfg         Config
-	fw          fw
-	mu          sync.Mutex
-	blockedIPs  map[string]blockedIP
-	blocksTotal atomic.Int64
-	suspsTotal  atomic.Int64
-	ratesTotal  atomic.Int64
+	cfg              Config
+	fw               fw
+	mu               sync.Mutex
+	blockedIPs       map[string]blockedIP
+	suspendedAccts   map[string]suspendedAcct
+	blocksTotal      atomic.Int64
+	suspsTotal       atomic.Int64
+	ratesTotal       atomic.Int64
 }
 
 // New crea un Enforcer con la configuración dada.
@@ -71,9 +86,10 @@ func New(cfg Config) *Enforcer {
 		cfg.Notifier = notify.Noop{}
 	}
 	return &Enforcer{
-		cfg:        cfg,
-		fw:         newFW(cfg.FirewallBackend),
-		blockedIPs: make(map[string]blockedIP),
+		cfg:            cfg,
+		fw:             newFW(cfg.FirewallBackend),
+		blockedIPs:     make(map[string]blockedIP),
+		suspendedAccts: make(map[string]suspendedAcct),
 	}
 }
 
@@ -175,11 +191,12 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 		if err := rateLimit(ctx, alert.Account, e.cfg.BanSeconds, e.cfg.PostfixSbin, e.cfg.PostfixConf); err != nil {
 			slog.Error("enforcement: fallo al aplicar rate-limit",
 				"account", alert.Account, "error", err)
-			return
+			alert.Reasons = append(alert.Reasons, fmt.Sprintf("⚠ fallo rate-limit: %v", err))
+		} else {
+			e.ratesTotal.Add(1)
+			slog.Info("enforcement: rate-limit aplicado",
+				"account", alert.Account, "ban_seconds", e.cfg.BanSeconds, "module", alert.Module)
 		}
-		e.ratesTotal.Add(1)
-		slog.Info("enforcement: rate-limit aplicado",
-			"account", alert.Account, "ban_seconds", e.cfg.BanSeconds, "module", alert.Module)
 
 	case detection.ActionPurgeQueue:
 		domain := alert.Domain
@@ -194,9 +211,10 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 		n, err := purgeQueueDomain(ctx, domain, e.cfg.PostfixSbin, e.cfg.PostfixConf)
 		if err != nil {
 			slog.Error("enforcement: fallo al purgar cola", "domain", domain, "error", err)
-			return
+			alert.Reasons = append(alert.Reasons, fmt.Sprintf("⚠ fallo al purgar cola: %v", err))
+		} else {
+			slog.Info("enforcement: cola purgada", "domain", domain, "deleted", n, "module", alert.Module)
 		}
-		slog.Info("enforcement: cola purgada", "domain", domain, "deleted", n, "module", alert.Module)
 
 	case detection.ActionNotifyOnly:
 		slog.Info("enforcement: notify_only — sin acción de contención")
@@ -281,7 +299,11 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 
 // suspendAccount suspende una cuenta Zimbra vía zmprov.
 func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
-	cmd := exec.CommandContext(ctx, "zmprov", "ma", alert.Account, "zimbraAccountStatus", "locked")
+	zmprov := e.cfg.ZmprovBin
+	if zmprov == "" {
+		zmprov = "/opt/zimbra/bin/zmprov"
+	}
+	cmd := exec.CommandContext(ctx, zmprov, "ma", alert.Account, "zimbraAccountStatus", "locked")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		slog.Error("enforcement: fallo al suspender cuenta",
@@ -292,6 +314,9 @@ func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 		return
 	}
 	e.suspsTotal.Add(1)
+	e.mu.Lock()
+	e.suspendedAccts[alert.Account] = suspendedAcct{module: alert.Module, timestamp: time.Now()}
+	e.mu.Unlock()
 	slog.Info("enforcement: cuenta suspendida", "account", alert.Account, "module", alert.Module)
 }
 
@@ -323,6 +348,21 @@ func (e *Enforcer) BlockedIPs() []BlockedIPInfo {
 				Module: entry.module,
 			})
 		}
+	}
+	return result
+}
+
+// SuspendedAccounts retorna una copia de las cuentas suspendidas en esta sesión.
+func (e *Enforcer) SuspendedAccounts() []SuspendedAcctInfo {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	result := make([]SuspendedAcctInfo, 0, len(e.suspendedAccts))
+	for account, entry := range e.suspendedAccts {
+		result = append(result, SuspendedAcctInfo{
+			Account:   account,
+			Module:    entry.module,
+			Timestamp: entry.timestamp,
+		})
 	}
 	return result
 }

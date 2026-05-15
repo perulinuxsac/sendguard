@@ -136,14 +136,14 @@ func TestHandlePurgeQueueSinPostfix(t *testing.T) {
 
 func TestBlockIPInvalida(t *testing.T) {
 	e := New(Config{})
-	if err := e.Block(context.Background(), "no-es-ip"); err == nil {
+	if err := e.Block(context.Background(), "no-es-ip", 0); err == nil {
 		t.Error("Block con IP inválida debe retornar error")
 	}
 }
 
 func TestBlockIPv6Rechazada(t *testing.T) {
 	e := New(Config{})
-	if err := e.Block(context.Background(), "::1"); err == nil {
+	if err := e.Block(context.Background(), "::1", 0); err == nil {
 		t.Error("Block con IPv6 debe retornar error")
 	}
 }

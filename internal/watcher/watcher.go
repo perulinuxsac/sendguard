@@ -178,7 +178,7 @@ func (w *Watcher) drainLines(f *os.File) {
 		if !ok {
 			continue
 		}
-		if w.server != "" && ev.Server == "" {
+		if w.server != "" {
 			ev.Server = w.server
 		}
 		select {

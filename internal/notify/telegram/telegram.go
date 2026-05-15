@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -72,8 +73,17 @@ func (n *Notifier) Notify(ctx context.Context, alert detection.Alert) error {
 	}
 	defer resp.Body.Close()
 
+	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram: respuesta inesperada: %d", resp.StatusCode)
+		return fmt.Errorf("telegram: HTTP %d: %s", resp.StatusCode, raw)
+	}
+
+	var result struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(raw, &result); err == nil && !result.OK {
+		return fmt.Errorf("telegram: API error: %s", result.Description)
 	}
 
 	slog.Debug("telegram: notificación enviada", "chat_id", n.cfg.ChatID, "module", alert.Module)

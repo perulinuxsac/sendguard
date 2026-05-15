@@ -15,6 +15,9 @@ package impossibletraveler
 
 import (
 	"fmt"
+	"log/slog"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/perulinux/sendguard/internal/detection"
@@ -27,9 +30,42 @@ type CountryLookup interface {
 	Country(ip string) string
 }
 
+// OrgLookup es una extensión opcional de CountryLookup para obtener la organización/ASN
+// de una IP (ej: "AS8075 MICROSOFT-CORP-MSN-AS-BLOCK"). Si el resolver no la implementa
+// la detección por org simplemente no aplica.
+type OrgLookup interface {
+	Org(ip string) string
+}
+
 // Config agrupa los parámetros del módulo.
 type Config struct {
-	WindowMinutes int // ventana máxima en minutos para considerar el viaje como imposible
+	WindowMinutes    int      // ventana máxima en minutos para considerar el viaje como imposible
+	AllowedCountries []string // países en whitelist; si ambos países están aquí no se alerta
+	TrustedCIDRs     []string // rangos de proxies conocidos (Outlook, Gmail, etc.) — se ignoran por completo
+	TrustedOrgs      []string // nombres de org/ASN conocidos (ej: "Microsoft", "Google") — detectados via ipinfo.io
+}
+
+func (c Config) isAllowed(country string) bool {
+	for _, a := range c.AllowedCountries {
+		if a == country {
+			return true
+		}
+	}
+	return false
+}
+
+// parseCIDRs convierte los strings de TrustedCIDRs a *net.IPNet, descartando los inválidos.
+func parseCIDRs(cidrs []string) []*net.IPNet {
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, ipnet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			slog.Warn("impossible_traveler: CIDR inválido ignorado", "cidr", cidr)
+			continue
+		}
+		nets = append(nets, ipnet)
+	}
+	return nets
 }
 
 // loginRecord almacena el último inicio de sesión conocido de una cuenta.
@@ -42,18 +78,56 @@ type loginRecord struct {
 // Module implementa detection.Module para la detección de viaje imposible.
 // No es thread-safe: debe ser llamado exclusivamente desde el goroutine del Engine.
 type Module struct {
-	cfg        Config
-	geoip      CountryLookup
-	lastLogins map[string]loginRecord // account → último login
+	cfg          Config
+	geoip        CountryLookup
+	lastLogins   map[string]loginRecord // account → último login
+	trustedNets  []*net.IPNet           // rangos de proxies conocidos (parseados al inicio)
 }
 
 // New crea un módulo ImpossibleTraveler con la configuración y resolver GeoIP dados.
 func New(cfg Config, geoip CountryLookup) *Module {
 	return &Module{
-		cfg:        cfg,
-		geoip:      geoip,
-		lastLogins: make(map[string]loginRecord),
+		cfg:         cfg,
+		geoip:       geoip,
+		lastLogins:  make(map[string]loginRecord),
+		trustedNets: parseCIDRs(cfg.TrustedCIDRs),
 	}
+}
+
+// isTrustedOrg retorna true si la org de la IP contiene alguno de los nombres configurados.
+// Requiere que el resolver implemente OrgLookup; si no, siempre retorna false.
+func (m *Module) isTrustedOrg(ip string) bool {
+	if len(m.cfg.TrustedOrgs) == 0 {
+		return false
+	}
+	ol, ok := m.geoip.(OrgLookup)
+	if !ok {
+		return false
+	}
+	org := strings.ToLower(ol.Org(ip))
+	if org == "" {
+		return false
+	}
+	for _, name := range m.cfg.TrustedOrgs {
+		if strings.Contains(org, strings.ToLower(name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// isTrustedProxy retorna true si la IP pertenece a un rango de proxy conocido.
+func (m *Module) isTrustedProxy(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, ipnet := range m.trustedNets {
+		if ipnet.Contains(parsed) {
+			return true
+		}
+	}
+	return false
 }
 
 // Name implementa detection.Module.
@@ -62,8 +136,15 @@ func (m *Module) Name() string { return "impossible_traveler" }
 // Handle procesa un evento. Solo actúa sobre AuthSuccess con cuenta e IP conocidas.
 // Emite una alerta si la cuenta inicia sesión desde un país distinto al del último
 // login registrado, y el tiempo entre ambos logins es menor que WindowMinutes.
+// Los logins desde proxies conocidos (Outlook Mobile, Gmail, etc.) se ignoran por completo:
+// no actualizan la ubicación del usuario ni disparan alertas.
 func (m *Module) Handle(ev event.Event) []detection.Alert {
 	if ev.Type != event.AuthSuccess || ev.Account == "" || ev.IP == "" {
+		return nil
+	}
+
+	// Ignorar proxies conocidos (CIDR o nombre de organización) — no actualizar ubicación ni comparar.
+	if m.isTrustedProxy(ev.IP) || m.isTrustedOrg(ev.IP) {
 		return nil
 	}
 
@@ -100,6 +181,11 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 
 	if elapsed >= window {
 		return nil // tiempo suficiente para viajar entre países
+	}
+
+	// Si ambos países están en la whitelist no hay anomalía (ej: PE + ES ambos permitidos).
+	if m.cfg.isAllowed(prev.country) && m.cfg.isAllowed(country) {
+		return nil
 	}
 
 	score := 85

@@ -40,6 +40,7 @@ type APIConf struct {
 type ZimbraConf struct {
 	Logs        LogPaths `yaml:"logs"`
 	Workers     int      `yaml:"workers"`
+	ZmprovBin   string   `yaml:"zmprov_bin"`   // ruta completa a zmprov (default: /opt/zimbra/bin/zmprov)
 	PostfixSbin string   `yaml:"postfix_sbin"` // dir de binarios de Postfix de Zimbra
 	PostfixConf string   `yaml:"postfix_conf"` // dir de configuración de Postfix de Zimbra
 }
@@ -61,12 +62,20 @@ type Rules struct {
 	} `yaml:"number_messages"`
 
 	SaslConnections struct {
-		Max      int `yaml:"max_sasl_connections"` // conexiones SASL simultáneas
-		ScanTime int `yaml:"scan_time"`
+		Max          int `yaml:"max_sasl_connections"` // conexiones totales por cuenta en ventana
+		MaxUniqueIPs int `yaml:"max_unique_ips"`        // IPs distintas por cuenta (0 = deshabilitado)
+		ScanTime     int `yaml:"scan_time"`
 	} `yaml:"sasl_connections"`
 
+	DistBrute struct {
+		MaxIPs   int `yaml:"max_ips"`   // IPs distintas fallando por cuenta para notificar
+		ScanTime int `yaml:"scan_time"` // ventana en segundos
+	} `yaml:"dist_brute_force"`
+
 	ImpossibleTraveler struct {
-		WindowMinutes int `yaml:"window_minutes"` // tiempo mínimo de viaje imposible
+		WindowMinutes int      `yaml:"window_minutes"` // tiempo mínimo de viaje imposible
+		TrustedCIDRs  []string `yaml:"trusted_cidrs"`  // rangos CIDR de proxies conocidos a ignorar
+		TrustedOrgs   []string `yaml:"trusted_orgs"`   // nombres de org/ASN de proxies conocidos (via ipinfo.io)
 	} `yaml:"impossible_traveler"`
 
 	QueueMonitor struct {
@@ -83,6 +92,11 @@ type Rules struct {
 		MaxBounces int `yaml:"max_bounces"` // rebotes por cuenta para suspender
 		ScanTime   int `yaml:"scan_time"`   // ventana en segundos
 	} `yaml:"bounce_rate"`
+
+	RcptFlood struct {
+		MaxRecipients int `yaml:"max_recipients"` // destinatarios por IP en ventana para bloquear
+		ScanTime      int `yaml:"scan_time"`       // ventana en segundos
+	} `yaml:"rcpt_flood"`
 }
 
 type GeoIPConf struct {
@@ -128,6 +142,15 @@ type Whitelist struct {
 type NotifyConf struct {
 	Telegram TelegramConf `yaml:"telegram"`
 	Webhook  WebhookConf  `yaml:"webhook"`
+	Email    EmailConf    `yaml:"email"`
+}
+
+// EmailConf configura el notificador de email via sendmail local de Zimbra.
+// No requiere credenciales SMTP — usa /opt/zimbra/common/sbin/sendmail directamente.
+type EmailConf struct {
+	From        string   `yaml:"from"`         // dirección remitente (requerido para activar el canal)
+	To          []string `yaml:"to"`           // destinatarios (al menos uno requerido)
+	SendmailBin string   `yaml:"sendmail_bin"` // default: /opt/zimbra/common/sbin/sendmail
 }
 
 type TelegramConf struct {
@@ -147,6 +170,7 @@ func Default() *Config {
 	cfg.Zimbra.Logs.Main = "/var/log/mail.log"
 	cfg.Zimbra.Logs.Mailbox = "/opt/zimbra/log/mailbox.log"
 	cfg.Zimbra.Workers = 4
+	cfg.Zimbra.ZmprovBin = "/opt/zimbra/bin/zmprov"
 	cfg.Zimbra.PostfixSbin = "/opt/zimbra/common/sbin"
 	cfg.Zimbra.PostfixConf = "/opt/zimbra/common/conf"
 
@@ -157,7 +181,11 @@ func Default() *Config {
 	cfg.Rules.NumberMessages.ScanTime = 3600
 
 	cfg.Rules.SaslConnections.Max = 20
+	cfg.Rules.SaslConnections.MaxUniqueIPs = 5
 	cfg.Rules.SaslConnections.ScanTime = 300
+
+	cfg.Rules.DistBrute.MaxIPs = 5
+	cfg.Rules.DistBrute.ScanTime = 300
 
 	cfg.Rules.ImpossibleTraveler.WindowMinutes = 30
 
@@ -169,6 +197,9 @@ func Default() *Config {
 
 	cfg.Rules.BounceRate.MaxBounces = 50
 	cfg.Rules.BounceRate.ScanTime = 300
+
+	cfg.Rules.RcptFlood.MaxRecipients = 50
+	cfg.Rules.RcptFlood.ScanTime = 300
 
 	cfg.GeoIP.APIURL = "https://ipinfo.io"
 	cfg.GeoIP.CacheTTL = 24

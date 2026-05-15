@@ -1,6 +1,7 @@
 package impossibletraveler_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -9,14 +10,14 @@ import (
 	"github.com/perulinux/sendguard/internal/event"
 )
 
-// mockGeoIP implementa CountryLookup para tests: devuelve el país según un mapa IP→país.
+// mockGeoIP implementa CountryLookup y OrgLookup para tests.
 type mockGeoIP struct {
 	countries map[string]string
+	orgs      map[string]string
 }
 
-func (m *mockGeoIP) Country(ip string) string {
-	return m.countries[ip]
-}
+func (m *mockGeoIP) Country(ip string) string { return m.countries[ip] }
+func (m *mockGeoIP) Org(ip string) string     { return m.orgs[ip] }
 
 var defaultCfg = impossibletraveler.Config{
 	WindowMinutes: 60,
@@ -44,10 +45,10 @@ func domainOf(account string) string {
 
 // geoip con dos IPs de países distintos para probar viaje imposible.
 func twoCountryGeoIP() *mockGeoIP {
-	return &mockGeoIP{countries: map[string]string{
-		"1.1.1.1": "PE",
-		"2.2.2.2": "CN",
-	}}
+	return &mockGeoIP{
+		countries: map[string]string{"1.1.1.1": "PE", "2.2.2.2": "CN"},
+		orgs:      map[string]string{},
+	}
 }
 
 func TestFirstLoginNoAlert(t *testing.T) {
@@ -242,6 +243,191 @@ func TestMultipleAccountsIndependent(t *testing.T) {
 	alertsB := m.Handle(authEvent("accountB@domain.com", "1.1.1.1", now.Add(10*time.Minute)))
 	if len(alertsB) != 1 {
 		t.Fatal("cuenta B debe generar alerta de viaje imposible independiente")
+	}
+}
+
+func TestAllowedCountriesBothPermittedNoAlert(t *testing.T) {
+	cfg := impossibletraveler.Config{
+		WindowMinutes:    60,
+		AllowedCountries: []string{"PE", "ES"},
+	}
+	geo := &mockGeoIP{countries: map[string]string{
+		"1.1.1.1": "PE",
+		"2.2.2.2": "ES",
+	}}
+	m := impossibletraveler.New(cfg, geo)
+	now := time.Now()
+
+	m.Handle(authEvent("user@domain.com", "1.1.1.1", now))
+	alerts := m.Handle(authEvent("user@domain.com", "2.2.2.2", now.Add(5*time.Minute)))
+	if len(alerts) != 0 {
+		t.Fatal("ambos países en whitelist no debe generar alerta")
+	}
+}
+
+func TestAllowedCountriesOneNotPermittedAlerts(t *testing.T) {
+	cfg := impossibletraveler.Config{
+		WindowMinutes:    60,
+		AllowedCountries: []string{"PE"},
+	}
+	geo := &mockGeoIP{countries: map[string]string{
+		"1.1.1.1": "PE",
+		"2.2.2.2": "CN",
+	}}
+	m := impossibletraveler.New(cfg, geo)
+	now := time.Now()
+
+	m.Handle(authEvent("user@domain.com", "1.1.1.1", now))
+	alerts := m.Handle(authEvent("user@domain.com", "2.2.2.2", now.Add(5*time.Minute)))
+	if len(alerts) != 1 {
+		t.Fatal("un país fuera de whitelist debe generar alerta")
+	}
+}
+
+func TestTrustedProxyIgnored(t *testing.T) {
+	cfg := impossibletraveler.Config{
+		WindowMinutes: 60,
+		TrustedCIDRs:  []string{"52.96.0.0/14"}, // rango de Microsoft
+	}
+	geo := &mockGeoIP{countries: map[string]string{
+		"1.1.1.1":    "PE",
+		"52.97.30.1": "US", // IP dentro del rango Microsoft
+	}}
+	m := impossibletraveler.New(cfg, geo)
+	now := time.Now()
+
+	// Login real desde PE
+	m.Handle(authEvent("user@domain.com", "1.1.1.1", now))
+	// Login desde proxy Microsoft — debe ignorarse por completo (sin alerta, sin actualizar ubicación)
+	alerts := m.Handle(authEvent("user@domain.com", "52.97.30.1", now.Add(2*time.Minute)))
+	if len(alerts) != 0 {
+		t.Fatal("login desde proxy conocido no debe generar alerta")
+	}
+
+	// Login real desde PE de nuevo — no debe alertar (ubicación sigue siendo PE)
+	alerts = m.Handle(authEvent("user@domain.com", "1.1.1.1", now.Add(5*time.Minute)))
+	if len(alerts) != 0 {
+		t.Fatal("login desde PE tras proxy Microsoft no debe alertar (ubicación no fue sobreescrita)")
+	}
+}
+
+func TestTrustedProxyDoesNotOverwriteLocation(t *testing.T) {
+	cfg := impossibletraveler.Config{
+		WindowMinutes: 60,
+		TrustedCIDRs:  []string{"52.96.0.0/14"},
+	}
+	geo := &mockGeoIP{countries: map[string]string{
+		"1.1.1.1":    "PE",
+		"52.97.30.1": "US",
+		"3.3.3.3":    "CN",
+	}}
+	m := impossibletraveler.New(cfg, geo)
+	now := time.Now()
+
+	// Login PE → proxy Microsoft (ignorado) → login CN: debe alertar PE→CN, no US→CN
+	m.Handle(authEvent("user@domain.com", "1.1.1.1", now))
+	m.Handle(authEvent("user@domain.com", "52.97.30.1", now.Add(1*time.Minute)))
+	alerts := m.Handle(authEvent("user@domain.com", "3.3.3.3", now.Add(2*time.Minute)))
+
+	if len(alerts) != 1 {
+		t.Fatalf("PE→(proxy ignorado)→CN debe generar 1 alerta, got %d", len(alerts))
+	}
+	// La razón debe mencionar PE como origen, no US
+	if !strings.Contains(alerts[0].Reasons[0], "PE") {
+		t.Errorf("la razón debe mencionar PE como origen: %s", alerts[0].Reasons[0])
+	}
+}
+
+func TestTrustedProxyInvalidCIDRIgnored(t *testing.T) {
+	// CIDRs inválidos no deben causar panic — simplemente se descartan.
+	cfg := impossibletraveler.Config{
+		WindowMinutes: 60,
+		TrustedCIDRs:  []string{"no-es-un-cidr", "52.96.0.0/14"},
+	}
+	m := impossibletraveler.New(cfg, twoCountryGeoIP())
+	if m == nil {
+		t.Fatal("New no debe retornar nil con CIDRs inválidos mezclados")
+	}
+}
+
+func TestTrustedOrgIgnored(t *testing.T) {
+	cfg := impossibletraveler.Config{
+		WindowMinutes: 60,
+		TrustedOrgs:   []string{"Microsoft"},
+	}
+	geo := &mockGeoIP{
+		countries: map[string]string{"1.1.1.1": "PE", "52.97.30.229": "US"},
+		orgs:      map[string]string{"52.97.30.229": "AS8075 MICROSOFT-CORP-MSN-AS-BLOCK"},
+	}
+	m := impossibletraveler.New(cfg, geo)
+	now := time.Now()
+
+	m.Handle(authEvent("user@domain.com", "1.1.1.1", now))
+	alerts := m.Handle(authEvent("user@domain.com", "52.97.30.229", now.Add(2*time.Minute)))
+	if len(alerts) != 0 {
+		t.Fatal("IP de Microsoft no debe generar alerta de impossible_traveler")
+	}
+}
+
+func TestTrustedOrgDoesNotOverwriteLocation(t *testing.T) {
+	cfg := impossibletraveler.Config{
+		WindowMinutes: 60,
+		TrustedOrgs:   []string{"Microsoft"},
+	}
+	geo := &mockGeoIP{
+		countries: map[string]string{
+			"1.1.1.1":     "PE",
+			"52.97.30.229": "US",
+			"3.3.3.3":     "CN",
+		},
+		orgs: map[string]string{
+			"52.97.30.229": "AS8075 MICROSOFT-CORP-MSN-AS-BLOCK",
+		},
+	}
+	m := impossibletraveler.New(cfg, geo)
+	now := time.Now()
+
+	// PE → Microsoft (ignorado) → CN: alerta debe decir PE→CN, no US→CN
+	m.Handle(authEvent("user@domain.com", "1.1.1.1", now))
+	m.Handle(authEvent("user@domain.com", "52.97.30.229", now.Add(1*time.Minute)))
+	alerts := m.Handle(authEvent("user@domain.com", "3.3.3.3", now.Add(2*time.Minute)))
+
+	if len(alerts) != 1 {
+		t.Fatalf("PE→(Microsoft ignorado)→CN debe generar 1 alerta, got %d", len(alerts))
+	}
+	if !strings.Contains(alerts[0].Reasons[0], "PE") {
+		t.Errorf("la razón debe mencionar PE como origen: %s", alerts[0].Reasons[0])
+	}
+}
+
+func TestTrustedOrgCaseInsensitive(t *testing.T) {
+	cfg := impossibletraveler.Config{
+		WindowMinutes: 60,
+		TrustedOrgs:   []string{"microsoft"}, // minúsculas
+	}
+	geo := &mockGeoIP{
+		countries: map[string]string{"1.1.1.1": "PE", "2.2.2.2": "US"},
+		orgs:      map[string]string{"2.2.2.2": "AS8075 MICROSOFT-CORP-MSN-AS-BLOCK"}, // mayúsculas
+	}
+	m := impossibletraveler.New(cfg, geo)
+	now := time.Now()
+
+	m.Handle(authEvent("user@domain.com", "1.1.1.1", now))
+	alerts := m.Handle(authEvent("user@domain.com", "2.2.2.2", now.Add(5*time.Minute)))
+	if len(alerts) != 0 {
+		t.Fatal("la comparación de org debe ser case-insensitive")
+	}
+}
+
+func TestAllowedCountriesEmptyListAlwaysAlerts(t *testing.T) {
+	// Sin allowed_countries configurado, cualquier cambio de país alerta.
+	m := impossibletraveler.New(defaultCfg, twoCountryGeoIP())
+	now := time.Now()
+
+	m.Handle(authEvent("user@domain.com", "1.1.1.1", now))
+	alerts := m.Handle(authEvent("user@domain.com", "2.2.2.2", now.Add(5*time.Minute)))
+	if len(alerts) != 1 {
+		t.Fatal("sin whitelist de países cualquier cambio de país debe alertar")
 	}
 }
 
