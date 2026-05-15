@@ -53,12 +53,30 @@ func New(cfg Config) *Forwarder {
 	}
 }
 
-// alertMeta contiene los metadatos de una alerta serializados en el campo raw.
+// alertMeta contiene los metadatos de una alerta serializados en el campo raw de SQLite.
 type alertMeta struct {
 	Module   string   `json:"module"`
 	Score    int      `json:"score"`
 	Severity int      `json:"severity"`
 	Reasons  []string `json:"reasons"`
+}
+
+// ControllerAlertPayload es la estructura JSON que el agente envía al Controller.
+// Todos los campos del alert se exponen como campos de primer nivel para que
+// el Controller pueda consumirlos sin doble-parseo.
+type ControllerAlertPayload struct {
+	ID        int64     `json:"id"`
+	Type      string    `json:"type"`              // acción: block_ip, suspend_account, etc.
+	Module    string    `json:"module"`
+	Score     int       `json:"score"`
+	Severity  int       `json:"severity"`
+	Timestamp time.Time `json:"timestamp"`
+	Server    string    `json:"server"`
+	IP        string    `json:"ip,omitempty"`
+	Account   string    `json:"account,omitempty"`
+	Domain    string    `json:"domain,omitempty"`
+	Country   string    `json:"country,omitempty"`
+	Reasons   []string  `json:"reasons"`
 }
 
 // SaveAlert persiste una alerta en SQLite para su posterior envío al Controller.
@@ -137,7 +155,31 @@ func (f *Forwarder) syncBatch(ctx context.Context) {
 		return
 	}
 
-	body, err := json.Marshal(events)
+	// Convertir a ControllerAlertPayload: campos de primer nivel, sin doble-parseo
+	// en el lado del Controller. El campo raw (alertMeta) se deserializa aquí.
+	payloads := make([]ControllerAlertPayload, 0, len(events))
+	for _, pe := range events {
+		p := ControllerAlertPayload{
+			ID:        pe.ID,
+			Type:      string(pe.Event.Type),
+			Timestamp: pe.Event.Timestamp,
+			Server:    pe.Event.Server,
+			IP:        pe.Event.IP,
+			Account:   pe.Event.Account,
+			Domain:    pe.Event.Domain,
+			Country:   pe.Event.Country,
+		}
+		var meta alertMeta
+		if err := json.Unmarshal([]byte(pe.Event.Raw), &meta); err == nil {
+			p.Module = meta.Module
+			p.Score = meta.Score
+			p.Severity = meta.Severity
+			p.Reasons = meta.Reasons
+		}
+		payloads = append(payloads, p)
+	}
+
+	body, err := json.Marshal(payloads)
 	if err != nil {
 		slog.Warn("forwarder: error al serializar eventos", "error", err)
 		return
