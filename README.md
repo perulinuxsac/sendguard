@@ -7,7 +7,7 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 ## Features
 
 - **Real-time log analysis** — tail-follows `mail.log` and `mailbox.log` without polling delays
-- **9 detection modules** — each tuned with configurable thresholds and time windows
+- **10 detection modules** — each tuned with configurable thresholds and time windows
 - **Multi-OS firewall support** — `firewalld` (RHEL/CentOS/Rocky/AlmaLinux) and `ufw` (Ubuntu/Debian)
 - **Account suspension** — locks compromised Zimbra accounts via `zmprov`
 - **Postfix rate-limiting and queue purging** — throttles sending or deletes queued spam per domain
@@ -34,6 +34,7 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 | `domain_discovery` | IP connects to N distinct destination domains in a window | Block IP |
 | `bounce_rate` | Account generates more than N bounces in a window | Suspend account |
 | `rcpt_flood` | IP sends to more than N unique recipients in a window | Block IP + Suspend account |
+| `password_spray` | IP fails authentication against N distinct accounts in a window | Block IP |
 
 ---
 
@@ -77,6 +78,7 @@ The agent exposes an HTTP API on `127.0.0.1:9099` (configurable). Protected endp
 |---|---|---|
 | `POST` | `/blocked/{ip}` | Manually block an IP |
 | `DELETE` | `/blocked/{ip}` | Manually unblock an IP |
+| `DELETE` | `/suspended/{account}` | Unsuspend a Zimbra account |
 | `POST` | `/whitelist/{value}` | Add IP/CIDR or account to whitelist |
 | `DELETE` | `/whitelist/{value}` | Remove IP/CIDR or account from whitelist |
 
@@ -93,6 +95,7 @@ Commands:
   status                      show blocked IPs and counters
   block   <ip>                manually block an IP
   unblock <ip>                manually unblock an IP
+  unsuspend <account>         unsuspend a Zimbra account
   health                      verify the agent is alive
   urban   <ip>                IP intelligence (AbuseIPDB + GeoIP)
   queue                       current Postfix mail queue

@@ -336,6 +336,9 @@ rules:
   rcpt_flood:
     max_recipients: 50
     scan_time: 300
+  password_spray:
+    max_accounts: 10
+    scan_time: 300
 
 geoip:
 ${GEOIP_DB_LINE}
@@ -365,6 +368,9 @@ notification:
   email:
     from: "${EMAIL_FROM}"
     to:${EMAIL_TO_YAML}
+
+daily_report:
+  hour: 8
 
 whitelist:
   accounts:${ACCTS_YAML}
