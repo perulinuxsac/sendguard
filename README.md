@@ -11,9 +11,11 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 - **Multi-OS firewall support** — `firewalld` (RHEL/CentOS/Rocky/AlmaLinux) and `ufw` (Ubuntu/Debian)
 - **Account suspension** — locks compromised Zimbra accounts via `zmprov`
 - **Postfix rate-limiting and queue purging** — throttles sending or deletes queued spam per domain
+- **Postfix policy daemon** — `sendguard-policyd` rejects connections from blocked IPs at SMTP time via `check_policy_service`
 - **GeoIP intelligence** — restricts logins to allowed countries via [ipinfo.io](https://ipinfo.io)
 - **AbuseIPDB enrichment** — annotates blocks with reputation scores
-- **Telegram and webhook notifications** — instant alerts on block/suspend actions
+- **Telegram, webhook and email notifications** — instant alerts on block/suspend actions
+- **Notification throttling** — per-IP/account cooldown and global rate cap to prevent alert floods
 - **REST API** — observe state and issue manual commands without touching the server
 - **SQLite persistence** — bans survive agent restarts
 - **StoreAndForward** — queues alerts locally when the central Controller is unreachable
@@ -152,7 +154,7 @@ See [INSTALL.md](INSTALL.md) for full installation details and configuration ref
 # Clone and build
 git clone https://github.com/perulinux/sendguard
 cd sendguard
-make build build-ctl     # produces dist/sendguard-agent and dist/sendguard-ctl
+make build build-ctl build-policyd  # produces dist/sendguard-agent, dist/sendguard-ctl, dist/sendguard-policyd
 make package             # creates dist/sendguard-<version>.tar.gz with service + install.sh
 make test                # run test suite
 make lint                # run golangci-lint

@@ -140,7 +140,7 @@ for bin in sendguard-agent sendguard-ctl sendguard-policyd; do
     elif [[ -f "$dst" ]]; then
         ok "$dst ya presente"
     else
-        die "Binario no encontrado: compila primero con 'make build build-ctl'"
+        die "Binario no encontrado: compila primero con 'make build build-ctl build-policyd'"
     fi
 done
 

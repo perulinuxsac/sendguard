@@ -9,11 +9,13 @@
 //	GET    /queue               — cola de correo Postfix actual
 //	GET    /domains             — dominios con alertas acumuladas
 //	GET    /whitelist           — contenido actual de la whitelist
+//	GET    /blocked/{ip}        — consulta rápida O(1) si una IP está bloqueada (usado por policyd)
 //
 // Endpoints protegidos (requieren X-Api-Key si está configurada):
 //
 //	POST   /blocked/{ip}        — bloquear IP manualmente
 //	DELETE /blocked/{ip}        — desbloquear IP manualmente
+//	DELETE /suspended/{account} — rehabilitar una cuenta Zimbra suspendida
 //	POST   /whitelist/{value}   — agregar IP/CIDR o cuenta a la whitelist
 //	DELETE /whitelist/{value}   — eliminar IP/CIDR o cuenta de la whitelist
 package api
