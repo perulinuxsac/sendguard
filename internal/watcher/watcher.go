@@ -38,9 +38,10 @@ type Watcher struct {
 // parseFn es la función que convierte cada línea en un evento; se puede pasar
 // p.ParseLine (para mail.log) o p.ParseMailboxLine (para mailbox.log).
 //
-// server se usa para rellenar ev.Server en logs que no incluyen el hostname
-// en cada línea (como mailbox.log). Pasar "" para mail.log, donde el hostname
-// ya viene en la cabecera syslog y el parser lo extrae.
+// server, si no está vacío, sobreescribe ev.Server con este valor en todos
+// los eventos. Úsalo para normalizar el identificador del servidor (ej:
+// cfg.ServerID) en lugar del hostname que aparece en el syslog, que puede
+// ser un nombre corto o diferir del server_id configurado.
 //
 // eventCh recibe los eventos reconocidos; el llamante es responsable de consumirlo.
 func New(path string, parseFn func(string) (event.Event, bool), server string, eventCh chan<- event.Event) *Watcher {

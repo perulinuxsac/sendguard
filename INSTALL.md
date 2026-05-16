@@ -96,6 +96,11 @@ The installer will:
 | Telegram chat ID | `-1001234567890` | Leave blank to skip |
 | Controller URL | `https://ctrl.example.com` | Leave blank for standalone mode |
 | Controller API key | `sg-key-...` | Leave blank for standalone mode |
+| Email from | `sendguard@midominio.com` | Leave blank to disable email notifications |
+| Email to | `noc@midominio.com` | Comma-separated recipients |
+| AbuseIPDB API key | `abc123...` | Leave blank to disable (free at abuseipdb.com) |
+| MaxMind Account ID | `123456` | Leave blank to use HTTP API fallback |
+| MaxMind License Key | `AbCdEf...` | Required if Account ID is provided |
 
 ---
 
@@ -168,10 +173,26 @@ rules:
 
   sasl_connections:
     max_sasl_connections: 20  # block IP after N concurrent SASL connections
+    max_unique_ips: 5         # suspend account when N distinct IPs auth as the same user
+    scan_time: 300
+
+  dist_brute_force:
+    max_ips: 5              # notify when N distinct IPs fail against the same account
     scan_time: 300
 
   impossible_traveler:
     window_minutes: 30      # minimum travel time between two login locations
+    # trusted_orgs: skip GeoIP check for IPs belonging to these organizations (ipinfo.io)
+    trusted_orgs:
+      - "MICROSOFT"
+      - "GOOGLE"
+      - "APPLE"
+      - "AMAZON"
+    # trusted_cidrs: skip GeoIP check for these IP ranges (fallback for local GeoIP DB)
+    trusted_cidrs:
+      - "52.96.0.0/14"
+      - "52.100.0.0/14"
+      - "104.47.0.0/17"
 
   queue_monitor:
     queue_threshold: 2500   # purge queue when domain has N deferred messages
@@ -185,9 +206,13 @@ rules:
     max_bounces: 50         # suspend account after N bounces
     scan_time: 300
 
+  rcpt_flood:
+    max_recipients: 50      # block IP + suspend account after N unique recipients
+    scan_time: 300
+
 # ── GeoIP ────────────────────────────────────────────────────────────────────
 geoip:
-  api_url: "https://ipinfo.io/lite"
+  api_url: "https://ipinfo.io"    # 50k requests/month free; add token for higher limits
   cache_ttl: 24             # hours to cache GeoIP responses
   allowed_countries:
     - "PE"
@@ -233,6 +258,11 @@ notification:
   webhook:
     url: ""                 # HTTP endpoint (Slack, Teams, n8n, etc.); blank to disable
     timeout: 10             # seconds
+  email:
+    from: ""                # sender address; leave blank to disable
+    to:
+      - ""                  # one or more recipient addresses
+    sendmail_bin: "/opt/zimbra/common/sbin/sendmail"  # uses Zimbra's sendmail, no SMTP config needed
 
 # ── Whitelist ─────────────────────────────────────────────────────────────────
 # Entries here are never blocked or suspended regardless of detection results.
@@ -356,9 +386,10 @@ firewall-cmd --list-rich-rules
 
 ```bash
 ufw status
-# The service needs /etc/ufw to be writable (ReadWritePaths in the service unit)
-grep ReadWritePaths /etc/systemd/system/sendguard-agent.service
-# Should include /etc/ufw
+# Verify the agent can call ufw
+ufw --dry-run deny from 1.2.3.4 to any
+# Confirm ufw is active
+ufw status | grep "Status:"
 ```
 
 ### Telegram notifications not arriving

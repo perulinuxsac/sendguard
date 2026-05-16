@@ -302,6 +302,10 @@ rules:
     scan_time: 3600
   sasl_connections:
     max_sasl_connections: 20
+    max_unique_ips: 5
+    scan_time: 300
+  dist_brute_force:
+    max_ips: 5
     scan_time: 300
   impossible_traveler:
     window_minutes: 30
@@ -328,6 +332,9 @@ rules:
     scan_time: 600
   bounce_rate:
     max_bounces: 50
+    scan_time: 300
+  rcpt_flood:
+    max_recipients: 50
     scan_time: 300
 
 geoip:

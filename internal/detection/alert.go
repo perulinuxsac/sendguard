@@ -52,6 +52,7 @@ type Alert struct {
 	IP      string
 	Account string
 	Domain  string
+	Country string // código ISO 3166-1 alpha-2 (PE, US, …); vacío si no se resolvió
 
 	Reasons []string // explicación legible de por qué se disparó
 }

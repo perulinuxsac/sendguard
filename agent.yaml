@@ -21,6 +21,7 @@ zimbra:
     main:    "/var/log/mail.log"              # maillog de Postfix — SMTP/SASL (obligatorio)
     mailbox: "/opt/zimbra/log/mailbox.log"   # log de Zimbra — IMAP/POP3/SOAP (opcional, dejar vacío para deshabilitar)
   workers: 4
+  zmprov_bin:   "/opt/zimbra/bin/zmprov"      # ruta completa a zmprov (systemd no incluye /opt/zimbra/bin en $PATH)
   postfix_sbin: "/opt/zimbra/common/sbin"    # directorio de binarios de Postfix de Zimbra
   postfix_conf: "/opt/zimbra/common/conf"    # directorio de configuración de Postfix de Zimbra
   # Para activar rate-limit, ejecutar una sola vez:
@@ -40,8 +41,13 @@ rules:
     scan_time: 3600         # ventana de 1 hora
 
   sasl_connections:
-    max_sasl_connections: 20  # conexiones SASL simultáneas antes de alertar
-    scan_time: 300
+    max_sasl_connections: 20  # conexiones totales por cuenta en ventana (botnet concentrado)
+    max_unique_ips: 5          # IPs distintas autenticando la misma cuenta (botnet distribuido) → bloquea todas + suspende
+    scan_time: 300             # ventana de 5 minutos
+
+  dist_brute_force:
+    max_ips: 5                 # IPs distintas fallando contra la misma cuenta → notificar admin
+    scan_time: 300             # ventana de 5 minutos
 
   impossible_traveler:
     window_minutes: 30      # login imposible si < 30 min entre países distintos
@@ -56,6 +62,10 @@ rules:
 
   bounce_rate:
     max_bounces: 50         # rebotes por cuenta antes de suspenderla
+    scan_time: 300          # ventana de 5 minutos
+
+  rcpt_flood:
+    max_recipients: 50      # destinatarios únicos por IP en la ventana para bloquear IP + suspender cuenta
     scan_time: 300          # ventana de 5 minutos
 
 # GeoIP — resolución IP → País
@@ -88,6 +98,7 @@ firewall:
 # Solo escucha en localhost por defecto; nunca exponer sin autenticación en producción.
 api:
   listen: "127.0.0.1:9099"  # vacío = API deshabilitada
+  # api_key: ""              # si se configura, los endpoints de escritura requieren X-Api-Key
 
 # Notificaciones — canales activos cuando se ejecuta una acción de contención
 # Cada canal se activa solo si sus campos requeridos están presentes.
@@ -95,6 +106,25 @@ notification:
   telegram:
     token: ""      # token del bot (vacío = canal desactivado)
     chat_id: ""    # ID del chat, grupo o canal destino
+  # Webhook HTTP genérico (Slack, Teams, n8n, etc.)
+  # webhook:
+  #   url: ""        # endpoint destino (vacío = canal desactivado)
+  #   timeout: 10    # segundos
+  # Email via sendmail local de Zimbra (no requiere config SMTP)
+  # email:
+  #   from: "sendguard@midominio.com"
+  #   to:
+  #     - "noc@midominio.com"
+  #   sendmail_bin: "/opt/zimbra/common/sbin/sendmail"
+
+# AbuseIPDB — enriquece alertas con reputación de IPs (registro gratuito en abuseipdb.com)
+# abuseipdb:
+#   api_key: ""      # clave de API (vacío deshabilita la integración)
+#   cache_ttl: 24    # horas de cache
+
+# Audit log — registro NDJSON de cada acción de contención (compatible con jq, Loki, etc.)
+# audit_log:
+#   path: "/var/log/sendguard-audit.log"
 
 # Whitelist — cuentas e IPs exentas de detección
 whitelist:

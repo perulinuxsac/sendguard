@@ -113,9 +113,9 @@ func rateLimit(ctx context.Context, account string, banSeconds int, sbinDir, con
 	f.Close()
 
 	postmap := filepath.Join(sbinDir, "postmap")
-	out, err := exec.CommandContext(ctx, postmap, accessFile).CombinedOutput()
+	out, err := exec.CommandContext(ctx, postmap, "lmdb:"+accessFile).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("postmap %s: %w (output: %s)", accessFile, err, string(out))
+		return fmt.Errorf("postmap lmdb:%s: %w (output: %s)", accessFile, err, string(out))
 	}
 
 	if banSeconds > 0 {
@@ -219,7 +219,7 @@ func removeRateLimit(account, sbinDir, confDir string) {
 	}
 
 	postmap := filepath.Join(sbinDir, "postmap")
-	if err := exec.Command(postmap, accessFile).Run(); err != nil {
+	if err := exec.Command(postmap, "lmdb:"+accessFile).Run(); err != nil {
 		slog.Warn("enforcement: postmap falló al limpiar rate-limit", "account", account, "error", err)
 		return
 	}

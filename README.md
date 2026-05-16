@@ -7,7 +7,7 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 ## Features
 
 - **Real-time log analysis** — tail-follows `mail.log` and `mailbox.log` without polling delays
-- **7 detection modules** — each tuned with configurable thresholds and time windows
+- **9 detection modules** — each tuned with configurable thresholds and time windows
 - **Multi-OS firewall support** — `firewalld` (RHEL/CentOS/Rocky/AlmaLinux) and `ufw` (Ubuntu/Debian)
 - **Account suspension** — locks compromised Zimbra accounts via `zmprov`
 - **Postfix rate-limiting and queue purging** — throttles sending or deletes queued spam per domain
@@ -27,11 +27,13 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 |---|---|---|
 | `auth_failed` | N SASL authentication failures in a time window | Block IP |
 | `number_messages` | Account sends more than N messages in a window | Suspend account |
-| `sasl_connections` | IP opens more than N concurrent SASL connections | Block IP |
+| `sasl_connections` | IP opens more than N concurrent SASL connections, or N distinct IPs authenticate the same account | Block IP / Suspend account |
+| `dist_brute_force` | N distinct IPs fail against the same account (credential stuffing) | Notify admin |
 | `impossible_traveler` | Same account logs in from two geographically impossible locations within W minutes | Suspend account |
 | `queue_monitor` | Domain has more than N deferred messages in a window | Purge queue |
 | `domain_discovery` | IP connects to N distinct destination domains in a window | Block IP |
 | `bounce_rate` | Account generates more than N bounces in a window | Suspend account |
+| `rcpt_flood` | IP sends to more than N unique recipients in a window | Block IP + Suspend account |
 
 ---
 

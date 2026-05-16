@@ -282,6 +282,9 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 
 	if e.cfg.AbuseIPDB != nil {
 		if report, err := e.cfg.AbuseIPDB.Check(ctx, alert.IP); err == nil {
+			if alert.Country == "" {
+				alert.Country = report.CountryCode
+			}
 			alert.Reasons = append(alert.Reasons,
 				fmt.Sprintf("AbuseIPDB score: %d/100 (%d reportes, país: %s)",
 					report.AbuseScore, report.TotalReports, report.CountryCode))

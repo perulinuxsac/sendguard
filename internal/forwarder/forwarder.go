@@ -99,6 +99,7 @@ func (f *Forwarder) SaveAlert(a detection.Alert) {
 		IP:        a.IP,
 		Account:   a.Account,
 		Domain:    a.Domain,
+		Country:   a.Country,
 		Raw:       string(meta),
 	}
 	if err := f.cfg.Store.SaveEvent(ev); err != nil {

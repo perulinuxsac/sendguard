@@ -207,6 +207,7 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 		IP:        ev.IP,
 		Account:   ev.Account,
 		Domain:    ev.Domain,
+		Country:   country,
 		Reasons:   []string{reason},
 	}}
 }
