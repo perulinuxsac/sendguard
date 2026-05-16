@@ -360,6 +360,15 @@ type BlockedIPInfo struct {
 	Module string
 }
 
+// IsBlocked retorna true si la IP está actualmente bloqueada y el ban no ha expirado.
+// O(1) — diseñado para ser llamado con alta frecuencia (policy daemon).
+func (e *Enforcer) IsBlocked(ip string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	entry, ok := e.blockedIPs[ip]
+	return ok && time.Now().Before(entry.expiry)
+}
+
 // BlockedIPs retorna una copia de las IPs actualmente bloqueadas (no expiradas).
 func (e *Enforcer) BlockedIPs() []BlockedIPInfo {
 	now := time.Now()

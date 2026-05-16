@@ -1,0 +1,22 @@
+[Unit]
+Description=SendGuard Policy Daemon (Postfix integration)
+Documentation=https://github.com/perulinux/sendguard
+After=network.target sendguard-agent.service
+Requires=sendguard-agent.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sendguard-policyd -config /etc/sendguard/agent.yaml
+Restart=always
+RestartSec=5
+User=root
+Group=root
+
+# El daemon es local y de bajo riesgo; no necesita namespace sandboxing
+# para poder leer /etc/sendguard/agent.yaml sin restricciones.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sendguard-policyd
+
+[Install]
+WantedBy=multi-user.target

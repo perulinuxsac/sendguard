@@ -42,6 +42,7 @@ type Dependencies struct {
 		BlockedIPs() []enforcement.BlockedIPInfo
 		SuspendedAccounts() []enforcement.SuspendedAcctInfo
 		Stats() enforcement.EnforcerStats
+		IsBlocked(ip string) bool
 		Unblock(ctx context.Context, ip string) error
 		// Block bloquea la IP. ttlOverride: 0=config, -1=permanente, >0=segundos.
 		Block(ctx context.Context, ip string, ttlOverride int) error
@@ -94,6 +95,7 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /queue", s.handleQueue)
 	mux.HandleFunc("GET /domains", s.handleDomains)
 	mux.HandleFunc("GET /whitelist", s.handleWhitelistGet)
+	mux.HandleFunc("GET /blocked/{ip}", s.handleBlockedCheck)
 	mux.HandleFunc("DELETE /blocked/{ip}", s.requireKey(s.handleUnblock))
 	mux.HandleFunc("POST /blocked/{ip}", s.requireKey(s.handleBlock))
 	mux.HandleFunc("DELETE /suspended/{account}", s.requireKey(s.handleUnsuspend))
@@ -251,6 +253,38 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "sendguard_module_alerts_total{module=%q} %d\n", ms.Module, ms.Alerts)
 		}
 	}
+}
+
+func (s *Server) handleBlockedCheck(w http.ResponseWriter, r *http.Request) {
+	ip := r.PathValue("ip")
+	if net.ParseIP(ip) == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "IP inválida"})
+		return
+	}
+	if s.deps.Enforcer.IsBlocked(ip) {
+		// Devolver detalles completos desde BlockedIPs para incluir expiry/module.
+		now := time.Now()
+		for _, b := range s.deps.Enforcer.BlockedIPs() {
+			if b.IP == ip {
+				ttl := b.Expiry.Sub(now)
+				ttlStr := ttl.Truncate(time.Second).String()
+				if ttl > 365*24*time.Hour {
+					ttlStr = "permanente"
+				}
+				writeJSON(w, http.StatusOK, map[string]any{
+					"blocked":    true,
+					"module":     b.Module,
+					"expires_at": b.Expiry,
+					"ttl":        ttlStr,
+				})
+				return
+			}
+		}
+		// IsBlocked=true pero no está en la lista — condición de carrera transitoria.
+		writeJSON(w, http.StatusOK, map[string]bool{"blocked": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"blocked": false})
 }
 
 func (s *Server) handleUnblock(w http.ResponseWriter, r *http.Request) {

@@ -38,6 +38,7 @@ func (m *mockEnforcer) Block(_ context.Context, ip string, _ int) error {
 	m.blockCalled = ip
 	return m.blockErr
 }
+func (m *mockEnforcer) IsBlocked(_ string) bool                   { return false }
 func (m *mockEnforcer) Unsuspend(_ context.Context, _ string) error { return nil }
 
 type mockEngine struct {

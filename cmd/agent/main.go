@@ -23,6 +23,7 @@ import (
 	"github.com/perulinux/sendguard/internal/detection/impossibletraveler"
 	"github.com/perulinux/sendguard/internal/detection/numbermessages"
 	"github.com/perulinux/sendguard/internal/detection/queuemonitor"
+	"github.com/perulinux/sendguard/internal/detection/accounttakeover"
 	"github.com/perulinux/sendguard/internal/detection/passwordspray"
 	"github.com/perulinux/sendguard/internal/detection/rcptflood"
 	"github.com/perulinux/sendguard/internal/detection/saslconnections"
@@ -136,8 +137,13 @@ func main() {
 		ScanTime:    time.Duration(cfg.Rules.PasswordSpray.ScanTime) * time.Second,
 	})
 
-	// Engine: distribuye eventos a los módulos (10 módulos)
-	engine := detection.NewEngine(alertCh, wl, authFailed, numberMessages, saslConns, impossTravel, queueMon, domainDisc, bounceRate, rcptFlood, distBrute, passSpray)
+	acctTakeover := accounttakeover.New(accounttakeover.Config{
+		MinFailures:  cfg.Rules.AccountTakeover.MinFailures,
+		CorrelWindow: time.Duration(cfg.Rules.AccountTakeover.CorrelWindow) * time.Second,
+	})
+
+	// Engine: distribuye eventos a los módulos (11 módulos)
+	engine := detection.NewEngine(alertCh, wl, authFailed, numberMessages, saslConns, impossTravel, queueMon, domainDisc, bounceRate, rcptFlood, distBrute, passSpray, acctTakeover)
 
 	// Notifier: construir canales activos según config
 	var notifiers []notify.Notifier

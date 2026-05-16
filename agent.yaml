@@ -72,6 +72,10 @@ rules:
     max_accounts: 10        # cuentas distintas atacadas desde la misma IP para bloquearla
     scan_time: 300          # ventana de 5 minutos
 
+  account_takeover:
+    min_failures: 5         # fallos mínimos para vigilar la cuenta (patrón brute-force → éxito)
+    correl_window: 600      # ventana de correlación: 10 minutos
+
 # GeoIP — resolución IP → País
 geoip:
   # db_path: "/var/lib/sendguard/GeoLite2-Country.mmdb"
@@ -97,6 +101,12 @@ local_db:
 firewall:
   backend: "firewalld"
   ban_seconds: 3600         # bloquear IP por 1 hora (0 = permanente)
+
+# Policy Daemon — rechazo en tiempo real vía Postfix check_policy_service
+# Requiere una configuración única en Postfix (ver docs/postfix-policy.md).
+# Con listen vacío el daemon no se inicia (el agente principal no se ve afectado).
+policy_daemon:
+  listen: "127.0.0.1:9100"  # vacío = deshabilitado
 
 # API HTTP de observabilidad y control
 # Solo escucha en localhost por defecto; nunca exponer sin autenticación en producción.

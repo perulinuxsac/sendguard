@@ -22,15 +22,21 @@ type Config struct {
 	// ProxyCIDRs: rangos de proxies cloud legítimos (Microsoft, Google, Apple…).
 	// Los eventos de estas IPs no activan módulos IP-céntricos (auth_failed, rcpt_flood)
 	// pero sí los de cuenta (sasl_connections, impossible_traveler).
-	ProxyCIDRs   []string        `yaml:"proxy_cidrs"`
-	Notification NotifyConf      `yaml:"notification"`
-	API          APIConf         `yaml:"api"`
-	DailyReport  DailyReportConf `yaml:"daily_report"`
+	ProxyCIDRs   []string          `yaml:"proxy_cidrs"`
+	Notification NotifyConf        `yaml:"notification"`
+	API          APIConf           `yaml:"api"`
+	DailyReport  DailyReportConf   `yaml:"daily_report"`
+	PolicyDaemon PolicyDaemonConf  `yaml:"policy_daemon"`
 }
 
 // DailyReportConf configura el envío del resumen diario por email.
 type DailyReportConf struct {
 	Hour int `yaml:"hour"` // hora UTC en que se envía (0-23, default 8)
+}
+
+// PolicyDaemonConf configura el daemon de políticas Postfix.
+type PolicyDaemonConf struct {
+	Listen string `yaml:"listen"` // ej: "127.0.0.1:9100" — vacío deshabilita el daemon
 }
 
 // ControllerConf configura la sincronización con el Controller central (Fase 3).
@@ -112,6 +118,11 @@ type Rules struct {
 		MaxAccounts int `yaml:"max_accounts"` // cuentas distintas desde la misma IP para bloquearla
 		ScanTime    int `yaml:"scan_time"`    // ventana en segundos
 	} `yaml:"password_spray"`
+
+	AccountTakeover struct {
+		MinFailures  int `yaml:"min_failures"`   // fallos mínimos antes de vigilar la cuenta
+		CorrelWindow int `yaml:"correl_window"`  // ventana de correlación en segundos
+	} `yaml:"account_takeover"`
 }
 
 type GeoIPConf struct {
@@ -220,6 +231,9 @@ func Default() *Config {
 
 	cfg.Rules.PasswordSpray.MaxAccounts = 10
 	cfg.Rules.PasswordSpray.ScanTime = 300
+
+	cfg.Rules.AccountTakeover.MinFailures = 5
+	cfg.Rules.AccountTakeover.CorrelWindow = 600 // 10 minutos
 
 	cfg.DailyReport.Hour = 8
 
