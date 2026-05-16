@@ -306,6 +306,8 @@ func actionIcon(a detection.Action) string {
 		return "&#x1F6AB;"
 	case detection.ActionSuspendAcct:
 		return "&#x1F512;"
+	case detection.ActionUnsuspendAcct:
+		return "&#x1F513;"
 	case detection.ActionRateLimit:
 		return "&#x23F3;"
 	case detection.ActionPurgeQueue:
@@ -321,6 +323,8 @@ func actionLabel(a detection.Action) string {
 		return "IP bloqueada en firewall"
 	case detection.ActionSuspendAcct:
 		return "Cuenta suspendida"
+	case detection.ActionUnsuspendAcct:
+		return "Cuenta rehabilitada"
 	case detection.ActionRateLimit:
 		return "Rate-limit aplicado"
 	case detection.ActionPurgeQueue:

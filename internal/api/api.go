@@ -45,11 +45,13 @@ type Dependencies struct {
 		Unblock(ctx context.Context, ip string) error
 		// Block bloquea la IP. ttlOverride: 0=config, -1=permanente, >0=segundos.
 		Block(ctx context.Context, ip string, ttlOverride int) error
+		Unsuspend(ctx context.Context, account string) error
 	}
 	Engine interface {
 		EventsTotal() int64
 		AlertsTotal() int64
 		DomainStats() []detection.DomainStat
+		ModuleStats() []detection.ModuleStat
 	}
 	Whitelist interface {
 		List() (ips []string, accounts []string)
@@ -94,6 +96,7 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /whitelist", s.handleWhitelistGet)
 	mux.HandleFunc("DELETE /blocked/{ip}", s.requireKey(s.handleUnblock))
 	mux.HandleFunc("POST /blocked/{ip}", s.requireKey(s.handleBlock))
+	mux.HandleFunc("DELETE /suspended/{account}", s.requireKey(s.handleUnsuspend))
 	mux.HandleFunc("POST /whitelist/{value}", s.requireKey(s.handleWhitelistAdd))
 	mux.HandleFunc("DELETE /whitelist/{value}", s.requireKey(s.handleWhitelistRemove))
 
@@ -239,7 +242,15 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprintf(w, "# HELP sendguard_blocked_ips_active IPs actualmente bloqueadas\n")
 	fmt.Fprintf(w, "# TYPE sendguard_blocked_ips_active gauge\n")
-	fmt.Fprintf(w, "sendguard_blocked_ips_active %d\n", len(blocked))
+	fmt.Fprintf(w, "sendguard_blocked_ips_active %d\n\n", len(blocked))
+
+	if mstats := s.deps.Engine.ModuleStats(); len(mstats) > 0 {
+		fmt.Fprintf(w, "# HELP sendguard_module_alerts_total Alertas emitidas por módulo\n")
+		fmt.Fprintf(w, "# TYPE sendguard_module_alerts_total counter\n")
+		for _, ms := range mstats {
+			fmt.Fprintf(w, "sendguard_module_alerts_total{module=%q} %d\n", ms.Module, ms.Alerts)
+		}
+	}
 }
 
 func (s *Server) handleUnblock(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +265,19 @@ func (s *Server) handleUnblock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"unblocked": ip})
+}
+
+func (s *Server) handleUnsuspend(w http.ResponseWriter, r *http.Request) {
+	account := r.PathValue("account")
+	if account == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "se requiere nombre de cuenta"})
+		return
+	}
+	if err := s.deps.Enforcer.Unsuspend(r.Context(), account); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"unsuspended": account})
 }
 
 func (s *Server) handleBlock(w http.ResponseWriter, r *http.Request) {
@@ -447,14 +471,16 @@ func isIPOrCIDR(s string) bool {
 type engineAdapter struct{ e *detection.Engine }
 
 func (a engineAdapter) EventsTotal() int64                   { return a.e.EventsTotal.Load() }
-func (a engineAdapter) AlertsTotal() int64                   { return a.e.AlertsTotal.Load() }
-func (a engineAdapter) DomainStats() []detection.DomainStat { return a.e.DomainStats() }
+func (a engineAdapter) AlertsTotal() int64                    { return a.e.AlertsTotal.Load() }
+func (a engineAdapter) DomainStats() []detection.DomainStat  { return a.e.DomainStats() }
+func (a engineAdapter) ModuleStats() []detection.ModuleStat  { return a.e.ModuleStats() }
 
 // AdaptEngine envuelve un *detection.Engine para satisfacer la interfaz Engine de Dependencies.
 func AdaptEngine(e *detection.Engine) interface {
 	EventsTotal() int64
 	AlertsTotal() int64
 	DomainStats() []detection.DomainStat
+	ModuleStats() []detection.ModuleStat
 } {
 	return engineAdapter{e}
 }

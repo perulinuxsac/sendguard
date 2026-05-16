@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -504,6 +505,35 @@ func (e *Enforcer) Block(ctx context.Context, ip string, ttlOverride int) error 
 	e.blockIPWithTTL(ctx, alert, banSecs)
 	if e.cfg.AuditLog != nil {
 		e.cfg.AuditLog.Log(ctx, alert)
+	}
+	return nil
+}
+
+// Unsuspend rehabilita una cuenta Zimbra suspendida vía zmprov y la elimina del registro interno.
+func (e *Enforcer) Unsuspend(ctx context.Context, account string) error {
+	if account == "" {
+		return fmt.Errorf("cuenta vacía")
+	}
+	zmprov := e.cfg.ZmprovBin
+	if zmprov == "" {
+		zmprov = "/opt/zimbra/bin/zmprov"
+	}
+	cmd := exec.CommandContext(ctx, zmprov, "ma", account, "zimbraAccountStatus", "active")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("zmprov ma %s active: %w (output: %s)", account, err, strings.TrimSpace(string(out)))
+	}
+	e.mu.Lock()
+	delete(e.suspendedAccts, account)
+	e.mu.Unlock()
+	slog.Info("enforcement: cuenta rehabilitada", "account", account)
+	if e.cfg.AuditLog != nil {
+		e.cfg.AuditLog.Log(ctx, detection.Alert{
+			Account:   account,
+			Module:    "manual",
+			Action:    detection.ActionUnsuspendAcct,
+			Timestamp: time.Now(),
+		})
 	}
 	return nil
 }

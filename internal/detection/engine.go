@@ -138,6 +138,12 @@ type DomainStat struct {
 	Alerts int64  `json:"alerts"`
 }
 
+// ModuleStat contiene el total de alertas emitidas por un módulo de detección.
+type ModuleStat struct {
+	Module string `json:"module"`
+	Alerts int64  `json:"alerts"`
+}
+
 // Engine distribuye eventos a los módulos de detección y envía alertas al canal.
 type Engine struct {
 	modules      []Module
@@ -146,7 +152,8 @@ type Engine struct {
 	EventsTotal  atomic.Int64 // total de eventos procesados
 	AlertsTotal  atomic.Int64 // total de alertas emitidas
 	domainMu     sync.RWMutex
-	domainAlerts map[string]int64 // dominio → alertas acumuladas
+	domainAlerts map[string]int64 // dominio → alertas acumuladas (protected by domainMu)
+	moduleAlerts map[string]int64 // módulo → alertas emitidas (protected by domainMu)
 	proxyCIDRs   []*net.IPNet     // rangos de proxies cloud: la IP se limpia antes de despachar
 }
 
@@ -158,6 +165,7 @@ func NewEngine(alertCh chan<- Alert, wl *Whitelist, modules ...Module) *Engine {
 		whitelist:    wl,
 		alertCh:      alertCh,
 		domainAlerts: make(map[string]int64),
+		moduleAlerts: make(map[string]int64),
 	}
 }
 
@@ -229,6 +237,9 @@ func (e *Engine) dispatch(ev event.Event) {
 		for _, a := range alerts {
 			e.AlertsTotal.Add(1)
 			e.trackDomain(a)
+			e.domainMu.Lock()
+			e.moduleAlerts[m.Name()]++
+			e.domainMu.Unlock()
 			select {
 			case e.alertCh <- a:
 			default:
@@ -253,6 +264,17 @@ func (e *Engine) trackDomain(a Alert) {
 	e.domainMu.Lock()
 	e.domainAlerts[domain]++
 	e.domainMu.Unlock()
+}
+
+// ModuleStats retorna las alertas emitidas por cada módulo desde que arrancó el agente.
+func (e *Engine) ModuleStats() []ModuleStat {
+	e.domainMu.RLock()
+	defer e.domainMu.RUnlock()
+	result := make([]ModuleStat, 0, len(e.moduleAlerts))
+	for mod, n := range e.moduleAlerts {
+		result = append(result, ModuleStat{Module: mod, Alerts: n})
+	}
+	return result
 }
 
 // DomainStats retorna las alertas acumuladas por dominio desde que arrancó el agente.

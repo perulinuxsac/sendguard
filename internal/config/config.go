@@ -8,23 +8,29 @@ import (
 )
 
 type Config struct {
-	ServerID     string         `yaml:"server_id"`
-	ClientName   string         `yaml:"client_name"`
-	Zimbra       ZimbraConf     `yaml:"zimbra"`
-	Rules        Rules          `yaml:"rules"`
-	GeoIP        GeoIPConf      `yaml:"geoip"`
-	AbuseIPDB    AbuseIPDBConf  `yaml:"abuseipdb"`
-	AuditLog     AuditLogConf   `yaml:"audit_log"`
-	LocalDB      LocalDBConf    `yaml:"local_db"`
-	Controller   ControllerConf `yaml:"controller"`
-	Firewall     FirewallConf   `yaml:"firewall"`
-	Whitelist    Whitelist      `yaml:"whitelist"`
+	ServerID     string          `yaml:"server_id"`
+	ClientName   string          `yaml:"client_name"`
+	Zimbra       ZimbraConf      `yaml:"zimbra"`
+	Rules        Rules           `yaml:"rules"`
+	GeoIP        GeoIPConf       `yaml:"geoip"`
+	AbuseIPDB    AbuseIPDBConf   `yaml:"abuseipdb"`
+	AuditLog     AuditLogConf    `yaml:"audit_log"`
+	LocalDB      LocalDBConf     `yaml:"local_db"`
+	Controller   ControllerConf  `yaml:"controller"`
+	Firewall     FirewallConf    `yaml:"firewall"`
+	Whitelist    Whitelist       `yaml:"whitelist"`
 	// ProxyCIDRs: rangos de proxies cloud legítimos (Microsoft, Google, Apple…).
 	// Los eventos de estas IPs no activan módulos IP-céntricos (auth_failed, rcpt_flood)
 	// pero sí los de cuenta (sasl_connections, impossible_traveler).
-	ProxyCIDRs   []string       `yaml:"proxy_cidrs"`
-	Notification NotifyConf     `yaml:"notification"`
-	API          APIConf        `yaml:"api"`
+	ProxyCIDRs   []string        `yaml:"proxy_cidrs"`
+	Notification NotifyConf      `yaml:"notification"`
+	API          APIConf         `yaml:"api"`
+	DailyReport  DailyReportConf `yaml:"daily_report"`
+}
+
+// DailyReportConf configura el envío del resumen diario por email.
+type DailyReportConf struct {
+	Hour int `yaml:"hour"` // hora UTC en que se envía (0-23, default 8)
 }
 
 // ControllerConf configura la sincronización con el Controller central (Fase 3).
@@ -101,6 +107,11 @@ type Rules struct {
 		MaxRecipients int `yaml:"max_recipients"` // destinatarios por IP en ventana para bloquear
 		ScanTime      int `yaml:"scan_time"`       // ventana en segundos
 	} `yaml:"rcpt_flood"`
+
+	PasswordSpray struct {
+		MaxAccounts int `yaml:"max_accounts"` // cuentas distintas desde la misma IP para bloquearla
+		ScanTime    int `yaml:"scan_time"`    // ventana en segundos
+	} `yaml:"password_spray"`
 }
 
 type GeoIPConf struct {
@@ -204,6 +215,11 @@ func Default() *Config {
 
 	cfg.Rules.RcptFlood.MaxRecipients = 50
 	cfg.Rules.RcptFlood.ScanTime = 300
+
+	cfg.Rules.PasswordSpray.MaxAccounts = 10
+	cfg.Rules.PasswordSpray.ScanTime = 300
+
+	cfg.DailyReport.Hour = 8
 
 	cfg.GeoIP.APIURL = "https://ipinfo.io"
 	cfg.GeoIP.CacheTTL = 24

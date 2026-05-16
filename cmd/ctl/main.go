@@ -11,6 +11,7 @@
 //	status                        — muestra estado, IPs bloqueadas y contadores
 //	block   <ip>                  — bloquea una IP manualmente vía la API
 //	unblock <ip>                  — desbloquea una IP manualmente vía la API
+//	unsuspend <cuenta>            — rehabilita una cuenta suspendida vía la API
 //	health                        — verifica que el agente responde
 //	urban   <ip>                  — inteligencia de IP (AbuseIPDB + GeoIP)
 //	queue                         — muestra la cola de correo Postfix actual
@@ -41,6 +42,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  status                      muestra IPs bloqueadas y contadores\n")
 		fmt.Fprintf(os.Stderr, "  block   [-permanent] <ip>   bloquea una IP manualmente\n")
 		fmt.Fprintf(os.Stderr, "  unblock <ip>                desbloquea una IP manualmente\n")
+		fmt.Fprintf(os.Stderr, "  unsuspend <cuenta>          rehabilita una cuenta suspendida\n")
 		fmt.Fprintf(os.Stderr, "  health                      verifica que el agente está vivo\n")
 		fmt.Fprintf(os.Stderr, "  urban   <ip>                inteligencia de IP (AbuseIPDB + GeoIP)\n")
 		fmt.Fprintf(os.Stderr, "  queue                       cola de correo Postfix actual\n")
@@ -80,6 +82,11 @@ func main() {
 			fatalf("unblock requiere una IP como argumento")
 		}
 		err = cmdUnblock(cli, flag.Arg(1))
+	case "unsuspend":
+		if flag.NArg() < 2 {
+			fatalf("unsuspend requiere una cuenta como argumento")
+		}
+		err = cmdUnsuspend(cli, flag.Arg(1))
 	case "urban":
 		if flag.NArg() < 2 {
 			fatalf("urban requiere una IP como argumento")
@@ -220,6 +227,15 @@ func cmdUnblock(cli *apiClient, ip string) error {
 		return err
 	}
 	fmt.Printf("IP desbloqueada: %s\n", body["unblocked"])
+	return nil
+}
+
+func cmdUnsuspend(cli *apiClient, account string) error {
+	var body map[string]string
+	if err := cli.do(http.MethodDelete, "/suspended/"+account, &body); err != nil {
+		return err
+	}
+	fmt.Printf("Cuenta rehabilitada: %s\n", body["unsuspended"])
 	return nil
 }
 

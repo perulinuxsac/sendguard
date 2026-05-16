@@ -23,6 +23,7 @@ import (
 	"github.com/perulinux/sendguard/internal/detection/impossibletraveler"
 	"github.com/perulinux/sendguard/internal/detection/numbermessages"
 	"github.com/perulinux/sendguard/internal/detection/queuemonitor"
+	"github.com/perulinux/sendguard/internal/detection/passwordspray"
 	"github.com/perulinux/sendguard/internal/detection/rcptflood"
 	"github.com/perulinux/sendguard/internal/detection/saslconnections"
 	"github.com/perulinux/sendguard/internal/enforcement"
@@ -30,6 +31,7 @@ import (
 	"github.com/perulinux/sendguard/internal/geoip"
 	"github.com/perulinux/sendguard/internal/notify"
 	"github.com/perulinux/sendguard/internal/notify/email"
+	"github.com/perulinux/sendguard/internal/report"
 	"github.com/perulinux/sendguard/internal/notify/telegram"
 	"github.com/perulinux/sendguard/internal/notify/webhook"
 	"github.com/perulinux/sendguard/internal/parser"
@@ -129,8 +131,13 @@ func main() {
 		ScanTime:      time.Duration(cfg.Rules.RcptFlood.ScanTime) * time.Second,
 	})
 
-	// Engine: distribuye eventos a los módulos
-	engine := detection.NewEngine(alertCh, wl, authFailed, numberMessages, saslConns, impossTravel, queueMon, domainDisc, bounceRate, rcptFlood, distBrute)
+	passSpray := passwordspray.New(passwordspray.Config{
+		MaxAccounts: cfg.Rules.PasswordSpray.MaxAccounts,
+		ScanTime:    time.Duration(cfg.Rules.PasswordSpray.ScanTime) * time.Second,
+	})
+
+	// Engine: distribuye eventos a los módulos (10 módulos)
+	engine := detection.NewEngine(alertCh, wl, authFailed, numberMessages, saslConns, impossTravel, queueMon, domainDisc, bounceRate, rcptFlood, distBrute, passSpray)
 
 	// Notifier: construir canales activos según config
 	var notifiers []notify.Notifier
@@ -243,6 +250,20 @@ func main() {
 
 	// Restaurar bans activos de firewalld (resiliencia al reinicio)
 	enforcer.LoadExistingBans(ctx)
+
+	// Reporter diario: resumen por email (solo si email está configurado)
+	if emailCfg.From != "" && len(emailCfg.To) > 0 {
+		reporter := report.New(report.Config{
+			Hour:        cfg.DailyReport.Hour,
+			EmailFrom:   emailCfg.From,
+			EmailTo:     emailCfg.To,
+			SendmailBin: emailCfg.SendmailBin,
+			ServerID:    cfg.ServerID,
+			ClientName:  cfg.ClientName,
+		}, enforcer, api.AdaptEngine(engine))
+		go reporter.Run(ctx)
+		slog.Info("report: resumen diario activado", "hour_utc", cfg.DailyReport.Hour)
+	}
 
 	// Watchers: leen los logs y parsean eventos hacia el mismo canal
 	p := parser.New()

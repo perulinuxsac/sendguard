@@ -68,6 +68,10 @@ rules:
     max_recipients: 50      # destinatarios únicos por IP en la ventana para bloquear IP + suspender cuenta
     scan_time: 300          # ventana de 5 minutos
 
+  password_spray:
+    max_accounts: 10        # cuentas distintas atacadas desde la misma IP para bloquearla
+    scan_time: 300          # ventana de 5 minutos
+
 # GeoIP — resolución IP → País
 geoip:
   # db_path: "/var/lib/sendguard/GeoLite2-Country.mmdb"
@@ -125,6 +129,11 @@ notification:
 # Audit log — registro NDJSON de cada acción de contención (compatible con jq, Loki, etc.)
 # audit_log:
 #   path: "/var/log/sendguard-audit.log"
+
+# Resumen diario — se envía via notification.email a la hora configurada (UTC)
+# Requiere que notification.email esté configurado.
+daily_report:
+  hour: 8                   # hora UTC de envío (0-23)
 
 # Whitelist — cuentas e IPs exentas de detección
 whitelist:
