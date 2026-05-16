@@ -120,6 +120,11 @@ notification:
   #   to:
   #     - "noc@midominio.com"
   #   sendmail_bin: "/opt/zimbra/common/sbin/sendmail"
+  # Throttle — evita floods de notificaciones durante ataques masivos.
+  # cooldown_seconds: tiempo mínimo entre notificaciones del mismo IP o cuenta.
+  # max_per_minute: límite total de notificaciones por minuto (todas las IPs).
+  cooldown_seconds: 300   # 5 min entre alertas del mismo IP/cuenta
+  max_per_minute: 10      # máximo 10 notificaciones distintas por minuto
 
 # AbuseIPDB — enriquece alertas con reputación de IPs (registro gratuito en abuseipdb.com)
 # abuseipdb:

@@ -368,6 +368,8 @@ notification:
   email:
     from: "${EMAIL_FROM}"
     to:${EMAIL_TO_YAML}
+  cooldown_seconds: 300
+  max_per_minute: 10
 
 daily_report:
   hour: 8

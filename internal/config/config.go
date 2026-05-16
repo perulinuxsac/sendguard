@@ -155,9 +155,11 @@ type Whitelist struct {
 // NotifyConf agrupa los canales de notificación disponibles.
 // Cada canal es opcional; se activa solo si sus campos obligatorios están presentes.
 type NotifyConf struct {
-	Telegram TelegramConf `yaml:"telegram"`
-	Webhook  WebhookConf  `yaml:"webhook"`
-	Email    EmailConf    `yaml:"email"`
+	Telegram        TelegramConf    `yaml:"telegram"`
+	Webhook         WebhookConf     `yaml:"webhook"`
+	Email           EmailConf       `yaml:"email"`
+	CooldownSeconds int             `yaml:"cooldown_seconds"` // cooldown por IP/cuenta (0 = deshabilitado)
+	MaxPerMinute    int             `yaml:"max_per_minute"`   // límite global por minuto (0 = deshabilitado)
 }
 
 // EmailConf configura el notificador de email via sendmail local de Zimbra.
@@ -220,6 +222,9 @@ func Default() *Config {
 	cfg.Rules.PasswordSpray.ScanTime = 300
 
 	cfg.DailyReport.Hour = 8
+
+	cfg.Notification.CooldownSeconds = 300 // 5 min entre notificaciones del mismo IP/cuenta
+	cfg.Notification.MaxPerMinute = 10    // máximo 10 notificaciones distintas por minuto
 
 	cfg.GeoIP.APIURL = "https://ipinfo.io"
 	cfg.GeoIP.CacheTTL = 24

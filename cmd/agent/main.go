@@ -167,6 +167,21 @@ func main() {
 		slog.Info("notificaciones email activadas", "from", emailCfg.From, "to", emailCfg.To)
 	}
 
+	// Throttle de notificaciones: cooldown por IP/cuenta + límite global por minuto.
+	// Se aplica sobre todos los canales activos para evitar floods durante ataques masivos.
+	var finalNotifier notify.Notifier = notify.NewMulti(notifiers...)
+	if cfg.Notification.CooldownSeconds > 0 || cfg.Notification.MaxPerMinute > 0 {
+		finalNotifier = notify.NewThrottled(finalNotifier, notify.ThrottleConfig{
+			KeyCooldown:  time.Duration(cfg.Notification.CooldownSeconds) * time.Second,
+			MaxPerWindow: cfg.Notification.MaxPerMinute,
+			Window:       time.Minute,
+		})
+		slog.Info("notify: throttle activado",
+			"cooldown_seconds", cfg.Notification.CooldownSeconds,
+			"max_per_minute", cfg.Notification.MaxPerMinute,
+		)
+	}
+
 	// Cliente AbuseIPDB (opcional)
 	var abuseClient *abuseipdb.Client
 	if cfg.AbuseIPDB.APIKey != "" {
@@ -240,7 +255,7 @@ func main() {
 		ZmprovBin:       cfg.Zimbra.ZmprovBin,
 		PostfixSbin:     cfg.Zimbra.PostfixSbin,
 		PostfixConf:     cfg.Zimbra.PostfixConf,
-		Notifier:        notify.NewMulti(notifiers...),
+		Notifier:        finalNotifier,
 		AbuseIPDB:       abuseClient,
 		AuditLog:        auditLog,
 		Store:           localStore,
