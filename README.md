@@ -7,7 +7,7 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 ## Features
 
 - **Real-time log analysis** — tail-follows `mail.log` and `mailbox.log` without polling delays
-- **10 detection modules** — each tuned with configurable thresholds and time windows
+- **11 detection modules** — each tuned with configurable thresholds and time windows
 - **Multi-OS firewall support** — `firewalld` (RHEL/CentOS/Rocky/AlmaLinux) and `ufw` (Ubuntu/Debian)
 - **Account suspension** — locks compromised Zimbra accounts via `zmprov`
 - **Postfix rate-limiting and queue purging** — throttles sending or deletes queued spam per domain
@@ -35,6 +35,7 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 | `bounce_rate` | Account generates more than N bounces in a window | Suspend account |
 | `rcpt_flood` | IP sends to more than N unique recipients in a window | Block IP + Suspend account |
 | `password_spray` | IP fails authentication against N distinct accounts in a window | Block IP |
+| `account_takeover` | N auth failures followed by auth success from same IP, or message send after failures | Suspend account + Block IP |
 
 ---
 

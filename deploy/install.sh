@@ -128,7 +128,7 @@ MAILBOX_LOG=""
 # ── Binarios ──────────────────────────────────────────────────────────────────
 section "── Instalación de binarios"
 
-for bin in sendguard-agent sendguard-ctl; do
+for bin in sendguard-agent sendguard-ctl sendguard-policyd; do
     dst="/usr/local/bin/$bin"
     # Buscar en: mismo dir (tar.gz plano) → ../dist/ (repo dev) → ya instalado
     if [[ -f "$SCRIPT_DIR/$bin" ]]; then
@@ -339,6 +339,9 @@ rules:
   password_spray:
     max_accounts: 10
     scan_time: 300
+  account_takeover:
+    min_failures: 5
+    correl_window: 600
 
 geoip:
 ${GEOIP_DB_LINE}
@@ -374,6 +377,9 @@ notification:
 daily_report:
   hour: 8
 
+policy_daemon:
+  listen: "127.0.0.1:9100"
+
 whitelist:
   accounts:${ACCTS_YAML}
   ips:${IPS_YAML}
@@ -386,18 +392,30 @@ ok "Configuración escrita en $CONFIG_FILE (firewall: $FIREWALL_BACKEND)"
 section "── Servicio systemd"
 
 install -m 644 "$SCRIPT_DIR/sendguard-agent.service" "$SERVICE_FILE"
-ok "Servicio instalado en $SERVICE_FILE"
+ok "Servicio agent instalado en $SERVICE_FILE"
+
+POLICYD_SERVICE="/etc/systemd/system/sendguard-policyd.service"
+install -m 644 "$SCRIPT_DIR/sendguard-policyd.service" "$POLICYD_SERVICE"
+ok "Servicio policyd instalado en $POLICYD_SERVICE"
 
 systemctl daemon-reload
-systemctl enable sendguard-agent
-ok "sendguard-agent habilitado para arrancar con el sistema"
+systemctl enable sendguard-agent sendguard-policyd
+ok "sendguard-agent y sendguard-policyd habilitados para arrancar con el sistema"
 
 if systemctl is-active --quiet sendguard-agent; then
     systemctl restart sendguard-agent
-    ok "Servicio reiniciado"
+    ok "sendguard-agent reiniciado"
 else
     systemctl start sendguard-agent
-    ok "Servicio iniciado"
+    ok "sendguard-agent iniciado"
+fi
+
+if systemctl is-active --quiet sendguard-policyd; then
+    systemctl restart sendguard-policyd
+    ok "sendguard-policyd reiniciado"
+else
+    systemctl start sendguard-policyd
+    ok "sendguard-policyd iniciado"
 fi
 
 # ── Verificación ──────────────────────────────────────────────────────────────
@@ -410,6 +428,12 @@ if systemctl is-active --quiet sendguard-agent; then
 else
     warn "El servicio no arrancó — revisa: journalctl -u sendguard-agent -n 30"
     exit 1
+fi
+
+if systemctl is-active --quiet sendguard-policyd; then
+    ok "sendguard-policyd está corriendo en 127.0.0.1:9100"
+else
+    warn "sendguard-policyd no arrancó — revisa: journalctl -u sendguard-policyd -n 30"
 fi
 
 if $BIN_CTL -addr "http://$API_ADDR" status &>/dev/null; then
