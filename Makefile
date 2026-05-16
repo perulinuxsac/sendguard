@@ -1,5 +1,6 @@
-BINARY      := sendguard-agent
-BINARY_CTL  := sendguard-ctl
+BINARY        := sendguard-agent
+BINARY_CTL    := sendguard-ctl
+BINARY_POLICYD := sendguard-policyd
 BUILD_DIR   := dist
 MODULE      := github.com/perulinux/sendguard
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -14,9 +15,9 @@ LDFLAGS := -s -w \
 # Binario Linux amd64 estático (para deploy en servidores Zimbra)
 GOFLAGS := CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 
-.PHONY: all build build-ctl package test lint vet clean install install-ctl help
+.PHONY: all build build-ctl build-policyd package test lint vet clean install install-ctl help
 
-all: build build-ctl
+all: build build-ctl build-policyd
 
 ## build: compila el agente como binario estático Linux/amd64 en dist/
 build:
@@ -29,6 +30,12 @@ build-ctl:
 	@mkdir -p $(BUILD_DIR)
 	$(GOFLAGS) go build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_CTL) ./cmd/ctl
 	@echo "Binario generado: $(BUILD_DIR)/$(BINARY_CTL)"
+
+## build-policyd: compila sendguard-policyd (daemon de políticas Postfix) en dist/
+build-policyd:
+	@mkdir -p $(BUILD_DIR)
+	$(GOFLAGS) go build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_POLICYD) ./cmd/policyd
+	@echo "Binario generado: $(BUILD_DIR)/$(BINARY_POLICYD)"
 
 ## test: ejecuta todos los tests con cobertura
 test:
@@ -48,11 +55,11 @@ lint:
 	golangci-lint run ./...
 
 ## package: compila y empaqueta todo para deploy en un tar.gz
-package: build build-ctl
+package: build build-ctl build-policyd
 	@mkdir -p $(BUILD_DIR)
 	tar -czf $(BUILD_DIR)/sendguard-$(VERSION).tar.gz \
-		-C $(BUILD_DIR) $(BINARY) $(BINARY_CTL) \
-		-C $(CURDIR)/deploy sendguard-agent.service install.sh test_sendguard.sh
+		-C $(BUILD_DIR) $(BINARY) $(BINARY_CTL) $(BINARY_POLICYD) \
+		-C $(CURDIR)/deploy sendguard-agent.service sendguard-policyd.service install.sh test_sendguard.sh
 	@echo "Paquete generado: $(BUILD_DIR)/sendguard-$(VERSION).tar.gz"
 	@echo "Copiar al cliente:  scp $(BUILD_DIR)/sendguard-$(VERSION).tar.gz root@IP:/tmp/"
 	@echo "Instalar:           tar xzf sendguard-$(VERSION).tar.gz && bash install.sh"

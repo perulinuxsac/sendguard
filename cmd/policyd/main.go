@@ -25,8 +25,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/perulinux/sendguard/internal/config"
@@ -170,9 +172,9 @@ func main() {
 		addr = defaultListen
 	}
 
-	agentBase := "http://" + cfg.API.Listen
-	if cfg.API.Listen == "" {
-		agentBase = "http://127.0.0.1:9099"
+	agentBase := "http://127.0.0.1:9099"
+	if cfg.API.Listen != "" {
+		agentBase = "http://" + cfg.API.Listen
 	}
 
 	chk := newChecker(agentBase)
@@ -187,6 +189,15 @@ func main() {
 		"agent_api", agentBase,
 		"cache_ttl", cacheTTL,
 	)
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		slog.Info("policyd: señal recibida, cerrando", "signal", sig)
+		ln.Close()
+		os.Exit(0)
+	}()
 
 	for {
 		conn, err := ln.Accept()
