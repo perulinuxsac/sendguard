@@ -74,6 +74,7 @@ The agent exposes an HTTP API on `127.0.0.1:9099` (configurable). Protected endp
 | `GET` | `/queue` | Current Postfix mail queue |
 | `GET` | `/domains` | Domains with accumulated alerts |
 | `GET` | `/whitelist` | Current whitelist contents |
+| `GET` | `/blocked/{ip}` | O(1) check whether an IP is currently blocked (used by `sendguard-policyd`) |
 
 ### Protected endpoints
 
@@ -140,9 +141,12 @@ bash install.sh
 The installer auto-detects the OS, firewall backend, Zimbra paths, and mail log location. It will prompt for:
 - Server ID and client name
 - Allowed countries (GeoIP)
-- Office network CIDRs for the whitelist
+- Office network CIDRs and account whitelist
 - Telegram bot token and chat ID (optional)
 - Central Controller URL and API key (optional; leave blank for standalone mode)
+- Email notifications — from/to addresses for alerts and daily report (optional)
+- AbuseIPDB API key for reputation enrichment (optional; free at abuseipdb.com)
+- MaxMind account ID and license key for local GeoIP database (optional; free at maxmind.com)
 
 See [INSTALL.md](INSTALL.md) for full installation details and configuration reference.
 
