@@ -261,12 +261,14 @@ func main() {
 		ZmprovBin:       cfg.Zimbra.ZmprovBin,
 		PostfixSbin:     cfg.Zimbra.PostfixSbin,
 		PostfixConf:     cfg.Zimbra.PostfixConf,
-		Notifier:        finalNotifier,
-		AbuseIPDB:       abuseClient,
-		AuditLog:        auditLog,
-		Store:           localStore,
-		Forwarder:       fwd,
-		Whitelist:       wl, // IPs bloqueadas se añaden al whitelist del engine automáticamente
+		Notifier:         finalNotifier,
+		AbuseIPDB:        abuseClient,
+		AuditLog:         auditLog,
+		Store:            localStore,
+		Forwarder:        fwd,
+		Whitelist:        wl, // IPs bloqueadas se añaden al whitelist del engine automáticamente
+		GeoResolver:      geoResolver,
+		AllowedCountries: cfg.GeoIP.AllowedCountries,
 	})
 
 	// Restaurar bans activos de firewalld (resiliencia al reinicio)

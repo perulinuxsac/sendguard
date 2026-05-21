@@ -18,6 +18,7 @@ import (
 	"github.com/perulinux/sendguard/internal/abuseipdb"
 	"github.com/perulinux/sendguard/internal/audit"
 	"github.com/perulinux/sendguard/internal/detection"
+	"github.com/perulinux/sendguard/internal/geoip"
 	"github.com/perulinux/sendguard/internal/notify"
 	"github.com/perulinux/sendguard/internal/store"
 )
@@ -48,6 +49,8 @@ type Config struct {
 	Store           *store.Store      // nil deshabilita la persistencia local SQLite
 	Forwarder       AlertForwarder    // nil deshabilita el StoreAndForward
 	Whitelist       IPWhitelist       // nil deshabilita la sincronización con el engine
+	GeoResolver     *geoip.Resolver   // nil deshabilita la verificación de país en bloqueos
+	AllowedCountries []string         // IPs de estos países no se bloquean en firewall (solo notificación)
 }
 
 // blockedIP registra cuándo expira el baneo de una IP para evitar
@@ -272,6 +275,17 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 	}
 	e.blockedIPs[alert.IP] = blockedIP{expiry: expiry, module: alert.Module}
 	e.mu.Unlock()
+
+	// País permitido: la IP se registra en memoria para deduplicación, pero no se
+	// bloquea en el firewall ni se persiste en SQLite (el ban no sobrevive reinicios).
+	// La notificación sigue enviándose desde handle() para informar al administrador.
+	if len(e.cfg.AllowedCountries) > 0 && e.cfg.GeoResolver != nil {
+		if country := e.cfg.GeoResolver.Country(alert.IP); isAllowedCountry(country, e.cfg.AllowedCountries) {
+			slog.Info("enforcement: IP de país permitido, bloqueo de firewall omitido",
+				"ip", alert.IP, "country", country, "module", alert.Module)
+			return
+		}
+	}
 
 	// Persistir antes de ejecutar el comando para no perder el registro
 	// si el proceso se reinicia inmediatamente después del ban.
@@ -593,4 +607,18 @@ func (e *Enforcer) Unblock(ctx context.Context, ip string) error {
 		})
 	}
 	return nil
+}
+
+// isAllowedCountry comprueba si un código de país ISO está en la lista de permitidos.
+func isAllowedCountry(country string, allowed []string) bool {
+	if country == "" {
+		return false
+	}
+	upper := strings.ToUpper(country)
+	for _, a := range allowed {
+		if strings.ToUpper(a) == upper {
+			return true
+		}
+	}
+	return false
 }
