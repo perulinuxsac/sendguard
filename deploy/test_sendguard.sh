@@ -278,7 +278,7 @@ done
 sleep "$PAUSE"
 
 if check_module "rcpt_flood"; then
-    ok "rcpt_flood disparado — IP 10.30.0.1 bloqueada + flood@perulinux.pe suspendida"
+    ok "rcpt_flood disparado — IP 198.51.100.1 bloqueada"
 else
     warn "rcpt_flood no apareció en logs"
     dump_agent_log
@@ -374,7 +374,7 @@ echo ""
 echo "Comandos útiles:"
 echo "  sendguard-ctl status"
 echo "  journalctl -u sendguard-agent -n 100 -o cat --no-pager"
-echo "  curl -s http://localhost:8080/blocked | python3 -m json.tool"
+echo "  curl -s http://localhost:9099/blocked | python3 -m json.tool"
 echo ""
 echo "Alertas de Telegram/Email se envían para módulos con acción block/suspend."
 echo ""
