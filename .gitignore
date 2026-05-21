@@ -4,3 +4,16 @@ dist/
 *.db-wal
 *.db-shm
 .claude/
+
+# Binarios compilados en el root (artefactos de build local)
+sendguard-agent
+sendguard-ctl
+sendguard-policyd
+
+# Imágenes extraídas del PDF de especificación (redundantes con prompt.pdf)
+page_*.png
+page_1.png
+
+# Archivos de trabajo temporales
+prompt_text.txt
+proyectonuevo/
