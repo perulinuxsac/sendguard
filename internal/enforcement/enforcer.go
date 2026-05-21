@@ -200,6 +200,12 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 			slog.Warn("enforcement: rate_limit sin cuenta, ignorando")
 			return
 		}
+		if e.isIPFromAllowedCountry(alert.IP) {
+			country := e.cfg.GeoResolver.Country(alert.IP)
+			slog.Info("enforcement: IP de país permitido, rate-limit omitido",
+				"ip", alert.IP, "country", country, "account", alert.Account, "module", alert.Module)
+			break
+		}
 		if e.cfg.PostfixSbin == "" || e.cfg.PostfixConf == "" {
 			slog.Warn("enforcement: rate_limit sin postfix_sbin/postfix_conf configurados, ignorando")
 			return
@@ -279,12 +285,11 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 	// País permitido: la IP se registra en memoria para deduplicación, pero no se
 	// bloquea en el firewall ni se persiste en SQLite (el ban no sobrevive reinicios).
 	// La notificación sigue enviándose desde handle() para informar al administrador.
-	if len(e.cfg.AllowedCountries) > 0 && e.cfg.GeoResolver != nil {
-		if country := e.cfg.GeoResolver.Country(alert.IP); isAllowedCountry(country, e.cfg.AllowedCountries) {
-			slog.Info("enforcement: IP de país permitido, bloqueo de firewall omitido",
-				"ip", alert.IP, "country", country, "module", alert.Module)
-			return
-		}
+	if e.isIPFromAllowedCountry(alert.IP) {
+		country := e.cfg.GeoResolver.Country(alert.IP)
+		slog.Info("enforcement: IP de país permitido, bloqueo de firewall omitido",
+			"ip", alert.IP, "country", country, "module", alert.Module)
+		return
 	}
 
 	// Persistir antes de ejecutar el comando para no perder el registro
@@ -335,6 +340,14 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 
 // suspendAccount suspende una cuenta Zimbra vía zmprov y bloquea la IP atacante si está presente.
 func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
+	// Si la alerta tiene una IP de un país permitido, omitir la suspensión.
+	// La notificación fluye igualmente desde handle().
+	if e.isIPFromAllowedCountry(alert.IP) {
+		country := e.cfg.GeoResolver.Country(alert.IP)
+		slog.Info("enforcement: IP de país permitido, suspensión de cuenta omitida",
+			"ip", alert.IP, "country", country, "account", alert.Account, "module", alert.Module)
+		return
+	}
 	zmprov := e.cfg.ZmprovBin
 	if zmprov == "" {
 		zmprov = "/opt/zimbra/bin/zmprov"
@@ -609,13 +622,18 @@ func (e *Enforcer) Unblock(ctx context.Context, ip string) error {
 	return nil
 }
 
-// isAllowedCountry comprueba si un código de país ISO está en la lista de permitidos.
-func isAllowedCountry(country string, allowed []string) bool {
+// isIPFromAllowedCountry retorna true si la IP no está vacía, GeoResolver está
+// configurado, y el país de la IP aparece en AllowedCountries.
+func (e *Enforcer) isIPFromAllowedCountry(ip string) bool {
+	if ip == "" || len(e.cfg.AllowedCountries) == 0 || e.cfg.GeoResolver == nil {
+		return false
+	}
+	country := e.cfg.GeoResolver.Country(ip)
 	if country == "" {
 		return false
 	}
 	upper := strings.ToUpper(country)
-	for _, a := range allowed {
+	for _, a := range e.cfg.AllowedCountries {
 		if strings.ToUpper(a) == upper {
 			return true
 		}
