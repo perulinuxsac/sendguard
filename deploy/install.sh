@@ -256,7 +256,7 @@ if [[ -n "$MM_ACCOUNT_ID" && -n "$MM_LICENSE_KEY" ]]; then
     MMDB_TAR="$DB_DIR/GeoLite2-Country.tar.gz"
     MMDB_PATH="$DB_DIR/GeoLite2-Country.mmdb"
     info "Descargando GeoLite2-Country.mmdb..."
-    if curl -fsSL -u "${MM_ACCOUNT_ID}:${MM_LICENSE_KEY}" "$MMDB_URL" -o "$MMDB_TAR" 2>/dev/null; then
+    if curl -fsSL -L -u "${MM_ACCOUNT_ID}:${MM_LICENSE_KEY}" "$MMDB_URL" -o "$MMDB_TAR" 2>/dev/null; then
         tar -xzf "$MMDB_TAR" --wildcards --strip-components=1 -C "$DB_DIR" '*.mmdb' 2>/dev/null \
             && rm -f "$MMDB_TAR" \
             && ok "GeoLite2-Country.mmdb instalado en $MMDB_PATH" \
@@ -269,7 +269,7 @@ if [[ -n "$MM_ACCOUNT_ID" && -n "$MM_LICENSE_KEY" ]]; then
 
     # Cron semanal de actualización (jueves 3am, MaxMind actualiza martes/viernes)
     if [[ -n "$MMDB_PATH" ]]; then
-        CRON_CMD="curl -fsSL -u '${MM_ACCOUNT_ID}:${MM_LICENSE_KEY}' '${MMDB_URL}' -o '${MMDB_TAR}' && tar -xzf '${MMDB_TAR}' --wildcards --strip-components=1 -C '${DB_DIR}' '*.mmdb' && rm -f '${MMDB_TAR}' && systemctl reload-or-restart sendguard-agent"
+        CRON_CMD="curl -fsSL -L -u '${MM_ACCOUNT_ID}:${MM_LICENSE_KEY}' '${MMDB_URL}' -o '${MMDB_TAR}' && tar -xzf '${MMDB_TAR}' --wildcards --strip-components=1 -C '${DB_DIR}' '*.mmdb' && rm -f '${MMDB_TAR}' && systemctl reload-or-restart sendguard-agent"
         (crontab -l 2>/dev/null | grep -v 'GeoLite2-Country'; echo "0 3 * * 4 $CRON_CMD # SendGuard GeoIP update") | crontab -
         ok "Cron de actualización GeoIP instalado (jueves 3am)"
     fi
