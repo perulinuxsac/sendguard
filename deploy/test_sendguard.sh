@@ -259,18 +259,21 @@ else
 fi
 
 # ─── Módulo 5: rcpt_flood (spam masivo a múltiples destinatarios) ─────────────
+# Usa IPs del rango TEST-NET-2 (RFC 5737, 198.51.100.0/24) para evitar que
+# la IP de prueba coincida con la IP del propio servidor (que suele estar en
+# la whitelist de sendguard) y provoque que los eventos se descarten silenciosamente.
 sep
 echo -e "${BOLD}▶  5/9  rcpt_flood — spam masivo a múltiples destinatarios${NC}"
-info "Inyectando auth + 6 RCPT de flood@perulinux.pe desde 10.30.0.1 (umbral: 5)"
+info "Inyectando auth + 6 RCPT de flood@perulinux.pe desde 198.51.100.1 (umbral: 5)"
 
 QID="RF00001BB"
 mark_time
 logger -p mail.info -t "postfix/smtps/smtpd[5001]" \
-    "$QID: client=unknown[10.30.0.1], sasl_method=PLAIN, sasl_username=flood@perulinux.pe"
+    "$QID: client=unknown[198.51.100.1], sasl_method=PLAIN, sasl_username=flood@perulinux.pe"
 sleep 0.1
 for i in {1..6}; do
     logger -p mail.info -t "postfix/smtps/smtpd[5001]" \
-        "$QID: filter: RCPT from unknown[10.30.0.1]: <flood@perulinux.pe>: FILTER smtp-amavis:[127.0.0.1]:10024"
+        "$QID: filter: RCPT from unknown[198.51.100.1]: <victim${i}@external.example>: FILTER smtp-amavis:[127.0.0.1]:10024"
 done
 sleep "$PAUSE"
 
