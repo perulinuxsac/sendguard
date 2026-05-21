@@ -236,8 +236,17 @@ func (e *Engine) dispatch(ev event.Event) {
 		alerts := m.Handle(ev)
 		for _, a := range alerts {
 			e.AlertsTotal.Add(1)
-			e.trackDomain(a)
+			// Actualizar domainAlerts y moduleAlerts bajo un único lock.
+			domain := a.Domain
+			if domain == "" && a.Account != "" {
+				if i := strings.LastIndex(a.Account, "@"); i >= 0 {
+					domain = a.Account[i+1:]
+				}
+			}
 			e.domainMu.Lock()
+			if domain != "" {
+				e.domainAlerts[domain]++
+			}
 			e.moduleAlerts[m.Name()]++
 			e.domainMu.Unlock()
 			select {
@@ -248,22 +257,6 @@ func (e *Engine) dispatch(ev event.Event) {
 			}
 		}
 	}
-}
-
-// trackDomain incrementa el contador de alertas del dominio de la alerta.
-func (e *Engine) trackDomain(a Alert) {
-	domain := a.Domain
-	if domain == "" && a.Account != "" {
-		if i := strings.LastIndex(a.Account, "@"); i >= 0 {
-			domain = a.Account[i+1:]
-		}
-	}
-	if domain == "" {
-		return
-	}
-	e.domainMu.Lock()
-	e.domainAlerts[domain]++
-	e.domainMu.Unlock()
 }
 
 // ModuleStats retorna las alertas emitidas por cada módulo desde que arrancó el agente.

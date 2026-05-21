@@ -39,7 +39,10 @@ type ThrottledNotifier struct {
 	pruneCount  int
 }
 
-const throttlePruneEvery = 500
+const (
+	throttlePruneEvery = 500
+	throttleMaxKeys    = 5_000 // poda forzada si el mapa supera este tamaño
+)
 
 // NewThrottled crea un ThrottledNotifier que envuelve inner.
 // Si cfg.Window es 0, se usa 1 minuto por defecto.
@@ -109,9 +112,11 @@ func (t *ThrottledNotifier) Notify(ctx context.Context, alert detection.Alert) e
 		t.keys[key] = now
 	}
 
-	// Limpiar claves expiradas periódicamente para evitar crecimiento ilimitado del mapa.
+	// Limpiar claves expiradas periódicamente o cuando el mapa sea demasiado grande.
+	// La poda forzada por tamaño evita crecimiento ilimitado durante ataques masivos
+	// con miles de IPs únicas antes de que se alcance el umbral de operaciones.
 	t.pruneCount++
-	if t.pruneCount >= throttlePruneEvery {
+	if t.pruneCount >= throttlePruneEvery || len(t.keys) >= throttleMaxKeys {
 		t.pruneCount = 0
 		cutoff := now.Add(-t.cfg.KeyCooldown)
 		for k, ts := range t.keys {

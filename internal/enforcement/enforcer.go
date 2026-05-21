@@ -369,6 +369,18 @@ func (e *Enforcer) IsBlocked(ip string) bool {
 	return ok && time.Now().Before(entry.expiry)
 }
 
+// GetBlockedIP retorna los detalles de una IP bloqueada en O(1).
+// El segundo valor es false si la IP no está bloqueada o el ban expiró.
+func (e *Enforcer) GetBlockedIP(ip string) (BlockedIPInfo, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	entry, ok := e.blockedIPs[ip]
+	if !ok || !time.Now().Before(entry.expiry) {
+		return BlockedIPInfo{}, false
+	}
+	return BlockedIPInfo{IP: ip, Expiry: entry.expiry, Module: entry.module}, true
+}
+
 // BlockedIPs retorna una copia de las IPs actualmente bloqueadas (no expiradas).
 func (e *Enforcer) BlockedIPs() []BlockedIPInfo {
 	now := time.Now()

@@ -18,6 +18,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -115,8 +116,16 @@ func (c *checker) queryAgent(ip string) bool {
 
 // handleConn atiende una conexión del smtpd de Postfix.
 // El protocolo es: pares clave=valor terminados por línea vacía → responde action=...\n\n
-func handleConn(conn net.Conn, chk *checker) {
+func handleConn(ctx context.Context, conn net.Conn, chk *checker, wg *sync.WaitGroup) {
+	defer wg.Done()
 	defer conn.Close()
+
+	// Cerrar la conexión cuando el contexto sea cancelado (shutdown).
+	go func() {
+		<-ctx.Done()
+		conn.Close()
+	}()
+
 	scanner := bufio.NewScanner(conn)
 	attrs := make(map[string]string, 16)
 
@@ -190,21 +199,34 @@ func main() {
 		"cache_ttl", cacheTTL,
 	)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
 		slog.Info("policyd: señal recibida, cerrando", "signal", sig)
+		cancel()
 		ln.Close()
-		os.Exit(0)
 	}()
 
+	var wg sync.WaitGroup
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			slog.Warn("policyd: error al aceptar conexión", "error", err)
-			continue
+			// ln.Close() en el goroutine de señal causa este error — es el shutdown normal.
+			select {
+			case <-ctx.Done():
+				wg.Wait()
+				slog.Info("policyd: detenido")
+				return
+			default:
+				slog.Warn("policyd: error al aceptar conexión", "error", err)
+				continue
+			}
 		}
-		go handleConn(conn, chk)
+		wg.Add(1)
+		go handleConn(ctx, conn, chk, &wg)
 	}
 }

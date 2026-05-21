@@ -45,6 +45,7 @@ type Dependencies struct {
 		SuspendedAccounts() []enforcement.SuspendedAcctInfo
 		Stats() enforcement.EnforcerStats
 		IsBlocked(ip string) bool
+		GetBlockedIP(ip string) (enforcement.BlockedIPInfo, bool)
 		Unblock(ctx context.Context, ip string) error
 		// Block bloquea la IP. ttlOverride: 0=config, -1=permanente, >0=segundos.
 		Block(ctx context.Context, ip string, ttlOverride int) error
@@ -263,30 +264,22 @@ func (s *Server) handleBlockedCheck(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "IP inválida"})
 		return
 	}
-	if s.deps.Enforcer.IsBlocked(ip) {
-		// Devolver detalles completos desde BlockedIPs para incluir expiry/module.
-		now := time.Now()
-		for _, b := range s.deps.Enforcer.BlockedIPs() {
-			if b.IP == ip {
-				ttl := b.Expiry.Sub(now)
-				ttlStr := ttl.Truncate(time.Second).String()
-				if ttl > 365*24*time.Hour {
-					ttlStr = "permanente"
-				}
-				writeJSON(w, http.StatusOK, map[string]any{
-					"blocked":    true,
-					"module":     b.Module,
-					"expires_at": b.Expiry,
-					"ttl":        ttlStr,
-				})
-				return
-			}
-		}
-		// IsBlocked=true pero no está en la lista — condición de carrera transitoria.
-		writeJSON(w, http.StatusOK, map[string]bool{"blocked": true})
+	b, ok := s.deps.Enforcer.GetBlockedIP(ip)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]bool{"blocked": false})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"blocked": false})
+	ttl := time.Until(b.Expiry)
+	ttlStr := ttl.Truncate(time.Second).String()
+	if ttl > 365*24*time.Hour {
+		ttlStr = "permanente"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"blocked":    true,
+		"module":     b.Module,
+		"expires_at": b.Expiry,
+		"ttl":        ttlStr,
+	})
 }
 
 func (s *Server) handleUnblock(w http.ResponseWriter, r *http.Request) {

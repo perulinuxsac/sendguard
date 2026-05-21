@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS pending_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_events_synced ON pending_events (synced, id);
+CREATE INDEX IF NOT EXISTS idx_pending_events_prune  ON pending_events (synced, created_at);
 `
 
 // BanRecord describe un ban activo cargado desde la base de datos.
