@@ -59,10 +59,11 @@ package: build build-ctl build-policyd
 	@mkdir -p $(BUILD_DIR)
 	tar -czf $(BUILD_DIR)/sendguard-$(VERSION).tar.gz \
 		-C $(BUILD_DIR) $(BINARY) $(BINARY_CTL) $(BINARY_POLICYD) \
-		-C $(CURDIR)/deploy sendguard-agent.service sendguard-policyd.service install.sh test_sendguard.sh
+		-C $(CURDIR)/deploy sendguard-agent.service sendguard-policyd.service install.sh uninstall.sh test_sendguard.sh
 	@echo "Paquete generado: $(BUILD_DIR)/sendguard-$(VERSION).tar.gz"
 	@echo "Copiar al cliente:  scp $(BUILD_DIR)/sendguard-$(VERSION).tar.gz root@IP:/tmp/"
 	@echo "Instalar:           tar xzf sendguard-$(VERSION).tar.gz && bash install.sh"
+	@echo "Desinstalar:        bash uninstall.sh"
 
 ## clean: elimina binarios y artefactos generados
 clean:
