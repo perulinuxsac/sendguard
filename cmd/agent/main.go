@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -42,7 +43,14 @@ import (
 
 func main() {
 	configPath := flag.String("config", "/etc/sendguard/agent.yaml", "ruta al archivo de configuración")
+	showVersion := flag.Bool("version", false, "muestra la versión y termina")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("sendguard-agent %s (commit %s, built %s)\n",
+			version.Version, version.Commit, version.BuildDate)
+		os.Exit(0)
+	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,

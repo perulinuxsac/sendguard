@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/perulinux/sendguard/internal/config"
+	"github.com/perulinux/sendguard/internal/version"
 )
 
 const (
@@ -162,7 +163,14 @@ func evaluate(attrs map[string]string, chk *checker) string {
 func main() {
 	configPath := flag.String("config", "/etc/sendguard/agent.yaml", "ruta al archivo de configuración")
 	listen := flag.String("listen", "", "dirección de escucha (override de policy_daemon.listen en config)")
+	showVersion := flag.Bool("version", false, "muestra la versión y termina")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("sendguard-policyd %s (commit %s, built %s)\n",
+			version.Version, version.Commit, version.BuildDate)
+		os.Exit(0)
+	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)

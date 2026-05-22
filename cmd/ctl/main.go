@@ -31,11 +31,14 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/perulinux/sendguard/internal/version"
 )
 
 func main() {
 	addr := flag.String("addr", "http://127.0.0.1:9099", "dirección de la API del agente")
 	key := flag.String("key", "", "API key (header X-Api-Key)")
+	showVersion := flag.Bool("version", false, "muestra la versión y termina")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Uso: sendguard-ctl [-addr URL] [-key KEY] <comando>\n\n")
 		fmt.Fprintf(os.Stderr, "Comandos:\n")
@@ -54,6 +57,12 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("sendguard-ctl %s (commit %s, built %s)\n",
+			version.Version, version.Commit, version.BuildDate)
+		os.Exit(0)
+	}
 
 	if flag.NArg() == 0 {
 		flag.Usage()
