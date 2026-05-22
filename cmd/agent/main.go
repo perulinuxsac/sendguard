@@ -269,6 +269,7 @@ func main() {
 		Whitelist:        wl, // IPs bloqueadas se añaden al whitelist del engine automáticamente
 		GeoResolver:      geoResolver,
 		AllowedCountries: cfg.GeoIP.AllowedCountries,
+		NotifyOnActions:  cfg.Notification.OnActions,
 	})
 
 	// Restaurar bans activos de firewalld (resiliencia al reinicio)

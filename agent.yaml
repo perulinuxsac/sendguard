@@ -135,6 +135,12 @@ notification:
   # max_per_minute: límite total de notificaciones por minuto (todas las IPs).
   cooldown_seconds: 300   # 5 min entre alertas del mismo IP/cuenta
   max_per_minute: 10      # máximo 10 notificaciones distintas por minuto
+  # on_actions: filtra qué acciones generan notificaciones push (Telegram/email/webhook).
+  # Si está vacío (o comentado) se notifica todo.
+  # Valores posibles: block_ip | suspend_account | rate_limit | purge_queue | notify_only
+  # Recomendado: solo suspend_account para recibir alertas solo cuando una cuenta es comprometida.
+  on_actions:
+    - suspend_account
 
 # AbuseIPDB — enriquece alertas con reputación de IPs (registro gratuito en abuseipdb.com)
 # abuseipdb:

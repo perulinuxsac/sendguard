@@ -49,8 +49,11 @@ type Config struct {
 	Store           *store.Store      // nil deshabilita la persistencia local SQLite
 	Forwarder       AlertForwarder    // nil deshabilita el StoreAndForward
 	Whitelist       IPWhitelist       // nil deshabilita la sincronización con el engine
-	GeoResolver     *geoip.Resolver   // nil deshabilita la verificación de país en bloqueos
-	AllowedCountries []string         // IPs de estos países no se bloquean en firewall (solo notificación)
+	GeoResolver      *geoip.Resolver   // nil deshabilita la verificación de país en bloqueos
+	AllowedCountries []string          // IPs de estos países no se bloquean en firewall (solo notificación)
+	// NotifyOnActions filtra las notificaciones push (Telegram/email/webhook) por acción.
+	// Si está vacío se notifica todo. Valores: block_ip | suspend_account | rate_limit | purge_queue | notify_only
+	NotifyOnActions  []string          // vacío = notificar todo
 }
 
 // blockedIP registra cuándo expira el baneo de una IP para evitar
@@ -248,6 +251,22 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 
 	if e.cfg.AuditLog != nil {
 		e.cfg.AuditLog.Log(ctx, alert)
+	}
+
+	// Filtro de notificaciones push: si NotifyOnActions está configurado, solo
+	// se envían notificaciones para las acciones incluidas en la lista.
+	// Forwarder y AuditLog siempre registran todo (sin filtro).
+	if len(e.cfg.NotifyOnActions) > 0 {
+		allowed := false
+		for _, a := range e.cfg.NotifyOnActions {
+			if string(alert.Action) == a {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return
+		}
 	}
 
 	if err := e.cfg.Notifier.Notify(ctx, alert); err != nil {
