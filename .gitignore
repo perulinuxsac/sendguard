@@ -9,6 +9,7 @@ dist/
 sendguard-agent
 sendguard-ctl
 sendguard-policyd
+agent
 
 # Imágenes extraídas del PDF de especificación (redundantes con prompt.pdf)
 page_*.png
