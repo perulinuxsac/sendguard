@@ -111,6 +111,14 @@ const queueTTL = 10 * time.Minute
 // pruneEveryQueues controla cada cuántas llamadas a parseQmgr se limpian entradas expiradas.
 const pruneEveryQueues = 500
 
+// authedEntry registra la cuenta SASL y el timestamp de una auth exitosa pendiente
+// de pasar por qmgr. Se necesita la cuenta para que los eventos RecipientAdded
+// (reRcptFilter) lleven al remitente, no al destinatario.
+type authedEntry struct {
+	account string
+	ts      time.Time
+}
+
 // senderEntry asocia un remitente autenticado con su timestamp de entrada en cola.
 // Se usa para correlacionar eventos de bounce con la cuenta que envió el mensaje.
 type senderEntry struct {
@@ -125,15 +133,15 @@ type senderEntry struct {
 //
 // Solo ParseLine accede a estos mapas; no hay acceso concurrente.
 type Parser struct {
-	authedQueues map[string]time.Time  // queueID → timestamp de auth SASL
-	queueSenders map[string]senderEntry // queueID → cuenta del remitente autenticado
+	authedQueues map[string]authedEntry  // queueID → {account, timestamp} de auth SASL
+	queueSenders map[string]senderEntry  // queueID → cuenta del remitente autenticado
 	queueCallCnt int
 }
 
 // New crea un Parser listo para usar.
 func New() *Parser {
 	return &Parser{
-		authedQueues: make(map[string]time.Time),
+		authedQueues: make(map[string]authedEntry),
 		queueSenders: make(map[string]senderEntry),
 	}
 }
@@ -286,23 +294,26 @@ func (p *Parser) parseSmtpd(ev event.Event, msg string) (event.Event, bool) {
 		ev.IP = m[2]
 		ev.Account = m[3]
 		ev.Domain = extractDomain(m[3])
-		// Marcar el queue ID como autenticado para que parseQmgr y reRcptFilter
-		// sepan que este mensaje es saliente (no correo entrante por MX).
-		p.authedQueues[m[1]] = ev.Timestamp
+		// Guardar cuenta además del timestamp para que reRcptFilter pueda asociar
+		// el remitente (sasl_username) a cada destinatario RCPT, no el destinatario mismo.
+		p.authedQueues[m[1]] = authedEntry{account: m[3], ts: ev.Timestamp}
 		return ev, true
 	}
 
 	if m := reRcptFilter.FindStringSubmatch(msg); m != nil {
 		// Solo emitir RecipientAdded para conexiones autenticadas.
 		// Las entregas MX entrantes (ej: sunat.gob.pe) no pasan por SASL.
-		if _, ok := p.authedQueues[m[1]]; !ok {
+		entry, ok := p.authedQueues[m[1]]
+		if !ok {
 			return event.Event{}, false
 		}
 		ev.Type = event.RecipientAdded
 		ev.QueueID = m[1]
 		ev.IP = m[2]
-		ev.Account = m[3]
-		ev.Domain = extractDomain(m[3])
+		// Usar el remitente autenticado (sasl_username), no el destinatario RCPT TO.
+		// Esto permite que rcptflood suspenda la cuenta comprometida correctamente.
+		ev.Account = entry.account
+		ev.Domain = extractDomain(entry.account)
 		return ev, true
 	}
 
@@ -320,7 +331,7 @@ func (p *Parser) parseQmgr(ev event.Event, msg string) (event.Event, bool) {
 	// Verificar si el mensaje fue enviado por un usuario autenticado vía SASL.
 	// Los mensajes entrantes por MX (ej: sunat.gob.pe enviando a clientes locales)
 	// NO tienen entrada en authedQueues y deben ignorarse para evitar falsos positivos.
-	authTS, authed := p.authedQueues[queueID]
+	authEntry, authed := p.authedQueues[queueID]
 	if authed {
 		delete(p.authedQueues, queueID)
 	}
@@ -346,7 +357,7 @@ func (p *Parser) parseQmgr(ev event.Event, msg string) (event.Event, bool) {
 	}
 	// Guardar cuenta para correlacionar bounces posteriores en parseDelivery.
 	if m[2] != "" {
-		p.queueSenders[queueID] = senderEntry{account: m[2], ts: authTS}
+		p.queueSenders[queueID] = senderEntry{account: m[2], ts: authEntry.ts}
 	}
 	return ev, true
 }
@@ -357,8 +368,8 @@ func (p *Parser) parseQmgr(ev event.Event, msg string) (event.Event, bool) {
 // cuyas entregas se distribuyen en el tiempo.
 func (p *Parser) pruneQueues(now time.Time) {
 	cutoff := now.Add(-queueTTL)
-	for qid, ts := range p.authedQueues {
-		if ts.Before(cutoff) {
+	for qid, entry := range p.authedQueues {
+		if entry.ts.Before(cutoff) {
 			delete(p.authedQueues, qid)
 		}
 	}

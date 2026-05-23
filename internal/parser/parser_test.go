@@ -400,6 +400,43 @@ func TestBounceCorrelation(t *testing.T) {
 	}
 }
 
+// TestRecipientAddedCarriesSender verifica que los eventos RecipientAdded llevan
+// la cuenta del REMITENTE autenticado (sasl_username), no la del destinatario RCPT TO.
+// Regresión: antes ev.Account = m[3] capturaba el email del destinatario, lo que
+// causaba que rcptflood intentara suspender una cuenta externa inexistente en Zimbra.
+func TestRecipientAddedCarriesSender(t *testing.T) {
+	p := parser.New()
+
+	// 1. Auth SASL exitosa — registra QID1 con sasl_username=flood@domain.com
+	authLine := `May 11 10:00:00 mail postfix/smtps/smtpd[1]: QID1: client=unknown[198.51.100.1], sasl_method=PLAIN, sasl_username=flood@domain.com`
+	authEv, ok := p.ParseLine(authLine)
+	if !ok {
+		t.Fatal("auth line debe parsear ok")
+	}
+	if authEv.Account != "flood@domain.com" {
+		t.Fatalf("auth: Account got %q, want flood@domain.com", authEv.Account)
+	}
+
+	// 2. RCPT filter — el Account del evento debe ser el REMITENTE, no el destinatario
+	rcptLine := `May 11 10:00:01 mail postfix/smtps/smtpd[1]: QID1: filter: RCPT from unknown[198.51.100.1]: <victim@external.example>: FILTER smtp-amavis:[127.0.0.1]:10024`
+	rcptEv, ok := p.ParseLine(rcptLine)
+	if !ok {
+		t.Fatal("rcpt filter line debe parsear ok")
+	}
+	if rcptEv.Type != event.RecipientAdded {
+		t.Fatalf("Type: got %q, want RecipientAdded", rcptEv.Type)
+	}
+	if rcptEv.Account != "flood@domain.com" {
+		t.Errorf("Account: got %q, want flood@domain.com (remitente SASL, no destinatario RCPT)", rcptEv.Account)
+	}
+	if rcptEv.Domain != "domain.com" {
+		t.Errorf("Domain: got %q, want domain.com", rcptEv.Domain)
+	}
+	if rcptEv.IP != "198.51.100.1" {
+		t.Errorf("IP: got %q, want 198.51.100.1", rcptEv.IP)
+	}
+}
+
 // TestBounceWithoutAuth verifica que un bounce de correo no autenticado (entrante MX)
 // no recibe Account — sin correlación no hay false positives en bouncerate.
 func TestBounceWithoutAuth(t *testing.T) {
