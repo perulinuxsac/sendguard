@@ -49,8 +49,8 @@ func TestExactThreshold(t *testing.T) {
 		t.Fatalf("se esperaba 1 alerta al llegar al umbral, got %d", len(alerts))
 	}
 	a := alerts[0]
-	if a.Action != detection.ActionPurgeQueue {
-		t.Errorf("Action: got %q, want ActionPurgeQueue", a.Action)
+	if a.Action != detection.ActionNotifyOnly {
+		t.Errorf("Action: got %q, want ActionNotifyOnly", a.Action)
 	}
 	if a.Score != 70 {
 		t.Errorf("Score: got %d, want 70", a.Score)

@@ -95,7 +95,7 @@ func (n *Notifier) buildMessage(alert detection.Alert) string {
 func buildPlain(alert detection.Alert, ts time.Time) string {
 	var sb strings.Builder
 	sev := severityLabel(alert.Severity)
-	act := actionLabel(alert.Action)
+	act := actionLabel(alert.Action, alert.Module)
 
 	fmt.Fprintf(&sb, "SendGuard — Alerta de Seguridad [%s]\n", sev)
 	fmt.Fprintf(&sb, "================================================\n\n")
@@ -130,8 +130,8 @@ func buildHTML(alert detection.Alert, ts time.Time) string {
 	sev := severityLabel(alert.Severity)
 	sevColor := severityColor(alert.Severity)
 	sevBg := severityBg(alert.Severity)
-	act := actionLabel(alert.Action)
-	actionIcon := actionIcon(alert.Action)
+	act := actionLabel(alert.Action, alert.Module)
+	icon := actionIcon(alert.Action, alert.Module)
 
 	var rows strings.Builder
 	addRow := func(label, value string) {
@@ -147,7 +147,7 @@ func buildHTML(alert detection.Alert, ts time.Time) string {
 	addRow("Fecha / Hora", ts.Format("2006-01-02 15:04:05 -07:00"))
 	addRow("Módulo", alert.Module)
 	addRow("Servidor", alert.Server)
-	addRow("IP atacante", alert.IP)
+	addRow("Dirección IP", alert.IP)
 	addRow("Cuenta", alert.Account)
 	addRow("Dominio", alert.Domain)
 
@@ -219,15 +219,15 @@ func buildHTML(alert detection.Alert, ts time.Time) string {
 </table>
 </body>
 </html>`,
-		headerColor(alert.Severity),     // cabecera bg
-		sev,                              // badge severidad
-		sevBg, sevColor,                  // acción bg / border
-		sevColor,                         // acción texto color
-		actionIcon, html.EscapeString(act), // icono + texto acción
-		sevColor,                         // score color
-		alert.Score,                      // score valor
-		rows.String(),                    // filas de detalles
-		reasonsHTML,                      // bloque razones
+		headerColor(alert.Severity),          // cabecera bg
+		sev,                                   // badge severidad
+		sevBg, sevColor,                       // acción bg / border
+		sevColor,                              // acción texto color
+		icon, html.EscapeString(act),          // icono + texto acción
+		sevColor,                              // score color
+		alert.Score,                           // score valor
+		rows.String(),                         // filas de detalles
+		reasonsHTML,                           // bloque razones
 		ts.Format("2006-01-02 15:04:05 -07:00"), // timestamp footer
 	)
 }
@@ -240,12 +240,15 @@ func formatSubject(alert detection.Alert) string {
 	if target == "" {
 		target = alert.Domain
 	}
+	if target == "" {
+		target = alert.Module
+	}
 	server := alert.Server
 	if server == "" {
 		server = "sendguard"
 	}
 	return fmt.Sprintf("[SendGuard][%s] %s — %s (%s)",
-		severityLabel(alert.Severity), actionLabel(alert.Action), target, server)
+		severityLabel(alert.Severity), actionLabel(alert.Action, alert.Module), target, server)
 }
 
 func severityLabel(s detection.Severity) string {
@@ -300,7 +303,9 @@ func headerColor(s detection.Severity) string {
 	}
 }
 
-func actionIcon(a detection.Action) string {
+// actionIcon devuelve el emoji HTML del icono según la acción. Para
+// ActionNotifyOnly usa el módulo para distinguir contextos informativos.
+func actionIcon(a detection.Action, module string) string {
 	switch a {
 	case detection.ActionBlockIP:
 		return "&#x1F6AB;"
@@ -310,14 +315,23 @@ func actionIcon(a detection.Action) string {
 		return "&#x1F513;"
 	case detection.ActionRateLimit:
 		return "&#x23F3;"
-	case detection.ActionPurgeQueue:
-		return "&#x1F9F9;"
+	case detection.ActionNotifyOnly:
+		switch module {
+		case "queue_monitor", "bounce_rate":
+			return "&#x1F4E8;" // 📨 sobre con flecha — alerta de entrega
+		case "dist_brute_force", "account_takeover":
+			return "&#x26A0;&#xFE0F;" // ⚠️ — peligro
+		default:
+			return "&#x1F514;" // 🔔 — notificación genérica
+		}
 	default:
 		return "&#x2139;&#xFE0F;"
 	}
 }
 
-func actionLabel(a detection.Action) string {
+// actionLabel traduce la acción a texto legible. Para ActionNotifyOnly usa el
+// módulo para dar contexto específico en lugar de un genérico "Notificación".
+func actionLabel(a detection.Action, module string) string {
 	switch a {
 	case detection.ActionBlockIP:
 		return "IP bloqueada en firewall"
@@ -327,9 +341,28 @@ func actionLabel(a detection.Action) string {
 		return "Cuenta rehabilitada"
 	case detection.ActionRateLimit:
 		return "Rate-limit aplicado"
-	case detection.ActionPurgeQueue:
-		return "Cola de correo purgada"
+	case detection.ActionNotifyOnly:
+		return moduleNotifyLabel(module)
 	default:
 		return "Notificación"
+	}
+}
+
+// moduleNotifyLabel devuelve una etiqueta contextual según el módulo que emite
+// ActionNotifyOnly.
+func moduleNotifyLabel(module string) string {
+	switch module {
+	case "queue_monitor":
+		return "Alerta de reputación"
+	case "dist_brute_force":
+		return "Fuerza bruta distribuida"
+	case "domain_discovery":
+		return "Reconocimiento de dominios"
+	case "bounce_rate":
+		return "Tasa de rebote alta"
+	case "account_takeover":
+		return "Posible robo de cuenta"
+	default:
+		return "Actividad sospechosa"
 	}
 }

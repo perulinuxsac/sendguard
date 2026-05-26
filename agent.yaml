@@ -137,7 +137,7 @@ notification:
   max_per_minute: 10      # máximo 10 notificaciones distintas por minuto
   # on_actions: filtra qué acciones generan notificaciones push (Telegram/email/webhook).
   # Si está vacío (o comentado) se notifica todo.
-  # Valores posibles: block_ip | suspend_account | rate_limit | purge_queue | notify_only
+  # Valores posibles: block_ip | suspend_account | rate_limit | notify_only
   # Recomendado: solo suspend_account para recibir alertas solo cuando una cuenta es comprometida.
   on_actions:
     - suspend_account

@@ -11,7 +11,7 @@ const (
 	ActionSuspendAcct   Action = "suspend_account"  // zmprov zimbraAccountStatus locked
 	ActionUnsuspendAcct Action = "unsuspend_account" // zmprov zimbraAccountStatus active
 	ActionRateLimit     Action = "rate_limit"        // limitar envíos vía Postfix policy
-	ActionPurgeQueue    Action = "purge_queue"       // purgar cola del atacante
+	ActionPurgeQueue    Action = "purge_queue"       // purgar cola Postfix (infraestructura; no emitido automáticamente por ningún módulo)
 	ActionNotifyOnly    Action = "notify_only"       // solo notificar, sin contención
 )
 

@@ -144,6 +144,76 @@ for bin in sendguard-agent sendguard-ctl sendguard-policyd; do
     fi
 done
 
+# ── Leer config existente (para usarla como defaults en upgrade) ───────────────
+# Extrae el valor escalar de una clave YAML simple: "key: value"
+cfg_get() {
+    local key="$1"
+    [[ -f "$CONFIG_FILE" ]] || return
+    grep -m1 "^[[:space:]]*${key}:" "$CONFIG_FILE" 2>/dev/null \
+        | sed 's/[^:]*:[[:space:]]*//' | tr -d '"' | tr -d "'" \
+        | sed 's/[[:space:]]*#.*$//; s/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+# Extrae una lista YAML (items con "    - value") como cadena separada por comas
+cfg_get_list() {
+    local key="$1"
+    [[ -f "$CONFIG_FILE" ]] || return
+    # Captura las líneas de lista que siguen a la clave hasta la siguiente clave
+    awk "/^[[:space:]]*${key}:/{found=1; next}
+         found && /^[[:space:]]*- /{gsub(/^[[:space:]]*- |\"/, \"\"); gsub(/[[:space:]]*#.*$/, \"\"); printf \"%s,\", \$0; next}
+         found && /^[[:space:]]*[a-z]/{exit}" \
+        "$CONFIG_FILE" 2>/dev/null | sed 's/,$//'
+}
+
+# Extrae el valor de una clave anidada bajo una sección de nivel superior.
+# cfg_get_under <section_top_level_key> <field_key>
+cfg_get_under() {
+    local section="$1" key="$2"
+    [[ -f "$CONFIG_FILE" ]] || return
+    awk "
+        /^${section}:[[:space:]]*$/{in_sec=1; next}
+        in_sec && /^[^[:space:]]/{exit}
+        in_sec && /^[[:space:]]+${key}:/{
+            sub(/^[^:]*:[[:space:]]*/, \"\")
+            gsub(/[\"']/, \"\")
+            gsub(/[[:space:]]*#.*$/, \"\")
+            print; exit
+        }
+    " "$CONFIG_FILE" 2>/dev/null
+}
+
+IS_UPGRADE=false
+if [[ -f "$CONFIG_FILE" ]]; then
+    IS_UPGRADE=true
+    warn "Configuración existente detectada en $CONFIG_FILE"
+    info "Los valores actuales se usan como predeterminados — presiona Enter para conservarlos."
+    echo ""
+    # Leer valores actuales
+    DEF_SERVER_ID=$(cfg_get "server_id")
+    DEF_CLIENT_NAME=$(cfg_get "client_name")
+    DEF_COUNTRIES=$(cfg_get_list "allowed_countries")
+    DEF_WL_IPS=$(cfg_get_list "ips")
+    DEF_WL_ACCTS=$(cfg_get_list "accounts")
+    DEF_TG_TOKEN=$(cfg_get_under "notification" "token")
+    DEF_TG_CHAT=$(cfg_get_under "notification" "chat_id")
+    DEF_CTRL_URL=$(cfg_get_under "controller" "url")
+    DEF_CTRL_KEY=$(cfg_get_under "controller" "api_key")
+    DEF_EMAIL_FROM=$(cfg_get_under "notification" "from")
+    DEF_EMAIL_TO=$(cfg_get_list "to")
+    DEF_ABUSEIPDB=$(cfg_get_under "abuseipdb" "api_key")
+    DEF_ON_ACTIONS=$(cfg_get_list "on_actions")
+else
+    DEF_SERVER_ID="$(hostname -s)-mail1"
+    DEF_CLIENT_NAME=""
+    DEF_COUNTRIES="PE"
+    DEF_WL_IPS="" DEF_WL_ACCTS=""
+    DEF_TG_TOKEN="" DEF_TG_CHAT=""
+    DEF_CTRL_URL="" DEF_CTRL_KEY=""
+    DEF_EMAIL_FROM="" DEF_EMAIL_TO=""
+    DEF_ABUSEIPDB=""
+    DEF_ON_ACTIONS="suspend_account"
+fi
+
 # ── Configuración interactiva ─────────────────────────────────────────────────
 section "── Configuración del cliente"
 
@@ -159,34 +229,34 @@ ask() {
     fi
 }
 
-ask "ID del servidor (ej: cliente-abc-mail1)"   "$(hostname -s)-mail1"  SERVER_ID
-ask "Nombre del cliente (ej: Laboratorios ABC)" ""                       CLIENT_NAME
+ask "ID del servidor (ej: cliente-abc-mail1)"   "$DEF_SERVER_ID"   SERVER_ID
+ask "Nombre del cliente (ej: Laboratorios ABC)" "$DEF_CLIENT_NAME" CLIENT_NAME
 [[ -n "$CLIENT_NAME" ]] || die "El nombre del cliente es obligatorio"
 
-ask "Países permitidos, separados por coma (ej: PE,US)"  "PE"  COUNTRIES_RAW
+ask "Países permitidos, separados por coma (ej: PE,US)"  "$DEF_COUNTRIES"  COUNTRIES_RAW
 
-ask "Redes de oficina en whitelist (CIDR, separadas por coma, vacío para omitir)"  ""  WL_IPS_RAW
-ask "Cuentas en whitelist (vacío para omitir)"                                      ""  WL_ACCTS_RAW
+ask "Redes de oficina en whitelist (CIDR, separadas por coma, vacío para omitir)"  "$DEF_WL_IPS"    WL_IPS_RAW
+ask "Cuentas en whitelist (vacío para omitir)"                                      "$DEF_WL_ACCTS"  WL_ACCTS_RAW
 
 echo ""
 info "Notificaciones Telegram (dejar vacío para omitir)"
-ask "Token del bot"  ""  TG_TOKEN
+ask "Token del bot"  "$DEF_TG_TOKEN"  TG_TOKEN
 TG_CHAT_ID=""
-[[ -n "$TG_TOKEN" ]] && ask "Chat ID"  ""  TG_CHAT_ID
+[[ -n "$TG_TOKEN" ]] && ask "Chat ID"  "$DEF_TG_CHAT"  TG_CHAT_ID
 
-ask "URL del Controller central (vacío = standalone)"  ""  CTRL_URL
+ask "URL del Controller central (vacío = standalone)"  "$DEF_CTRL_URL"  CTRL_URL
 CTRL_KEY=""
-[[ -n "$CTRL_URL" ]] && ask "API Key del Controller"  ""  CTRL_KEY
+[[ -n "$CTRL_URL" ]] && ask "API Key del Controller"  "$DEF_CTRL_KEY"  CTRL_KEY
 
 echo ""
 info "Notificaciones por Email (usa sendmail de Zimbra — sin configuración SMTP)"
-ask "Correo remitente (from, vacío para omitir)"  ""  EMAIL_FROM
+ask "Correo remitente (from, vacío para omitir)"  "$DEF_EMAIL_FROM"  EMAIL_FROM
 EMAIL_TO=""
-[[ -n "$EMAIL_FROM" ]] && ask "Destinatarios (separados por coma)"  ""  EMAIL_TO
+[[ -n "$EMAIL_FROM" ]] && ask "Destinatarios (separados por coma)"  "$DEF_EMAIL_TO"  EMAIL_TO
 
 echo ""
 info "AbuseIPDB (enriquece alertas con reputación de IPs — registro gratuito en abuseipdb.com)"
-ask "API Key de AbuseIPDB (vacío para omitir)"  ""  ABUSEIPDB_KEY
+ask "API Key de AbuseIPDB (vacío para omitir)"  "$DEF_ABUSEIPDB"  ABUSEIPDB_KEY
 
 echo ""
 info "GeoIP local MaxMind (recomendado para producción, evita rate-limits)"
@@ -244,8 +314,25 @@ fi
 [[ -z "$ACCTS_YAML" ]] && ACCTS_YAML=$'\n    []'
 [[ -z "$IPS_YAML" ]]   && IPS_YAML=$'\n    []'
 
+# Convertir on_actions a lista YAML (preservar valor existente en upgrade)
+ON_ACTIONS_YAML=""
+if [[ -n "$DEF_ON_ACTIONS" ]]; then
+    IFS=',' read -ra OA_ARR <<< "$DEF_ON_ACTIONS"
+    for action in "${OA_ARR[@]}"; do
+        action="${action// /}"
+        [[ -n "$action" ]] && ON_ACTIONS_YAML+=$'\n    - '"$action"
+    done
+fi
+[[ -z "$ON_ACTIONS_YAML" ]] && ON_ACTIONS_YAML=$'\n    - suspend_account'
+
 mkdir -p /etc/sendguard "$DB_DIR"
 chmod 750 /etc/sendguard "$DB_DIR"
+
+# Backup de config anterior en upgrade
+if $IS_UPGRADE; then
+    cp "$CONFIG_FILE" "${CONFIG_FILE}.bak"
+    ok "Config anterior guardada en ${CONFIG_FILE}.bak"
+fi
 
 # Descargar GeoLite2-Country.mmdb si se proporcionó license key
 MMDB_PATH=""
@@ -373,6 +460,7 @@ notification:
     to:${EMAIL_TO_YAML}
   cooldown_seconds: 300
   max_per_minute: 10
+  on_actions:${ON_ACTIONS_YAML}
 
 daily_report:
   hour: 8

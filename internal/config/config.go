@@ -172,7 +172,7 @@ type NotifyConf struct {
 	CooldownSeconds int             `yaml:"cooldown_seconds"` // cooldown por IP/cuenta (0 = deshabilitado)
 	MaxPerMinute    int             `yaml:"max_per_minute"`   // límite global por minuto (0 = deshabilitado)
 	// OnActions filtra las notificaciones push (Telegram/email/webhook) por acción.
-	// Si está vacío se notifica todo. Valores: block_ip | suspend_account | rate_limit | purge_queue | notify_only
+	// Si está vacío se notifica todo. Valores activos: block_ip | suspend_account | rate_limit | notify_only
 	OnActions       []string        `yaml:"on_actions"`
 }
 

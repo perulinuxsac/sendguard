@@ -4,12 +4,13 @@
 // Cuando un dominio destino (ej: gmail.com, hotmail.com) empieza a diferir muchos
 // mensajes, indica un problema de reputación: la IP del servidor probablemente está
 // en una RBL, tiene un PTR incorrecto, o sus mensajes se clasifican como spam. La
-// detección temprana permite notificar al administrador y purgar la cola antes de
-// que el backlog crezca indefinidamente.
+// detección temprana permite notificar al administrador para que investigue la causa.
 //
 // Fuente: eventos MessageDeferred (postfix/smtp status=deferred), agrupados por
 // dominio del destinatario (extraído de Extra["to"]).
-// Acción: purga de cola (ActionPurgeQueue), score 70.
+// Acción: notificación al administrador (ActionNotifyOnly), score 70.
+// No se purga la cola porque los mensajes diferidos son reintentados automáticamente
+// por Postfix; purgarlos causaría pérdida permanente de correos legítimos.
 package queuemonitor
 
 import (
@@ -100,7 +101,7 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 		Module:    m.Name(),
 		Score:     score,
 		Severity:  detection.SeverityFromScore(score),
-		Action:    detection.ActionPurgeQueue,
+		Action:    detection.ActionNotifyOnly,
 		Timestamp: ev.Timestamp,
 		Server:    ev.Server,
 		IP:        ev.IP,

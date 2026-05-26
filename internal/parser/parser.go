@@ -387,6 +387,12 @@ func (p *Parser) parseDelivery(ev event.Event, msg string) (event.Event, bool) {
 		return event.Event{}, false
 	}
 
+	p.queueCallCnt++
+	if p.queueCallCnt >= pruneEveryQueues {
+		p.queueCallCnt = 0
+		p.pruneQueues(ev.Timestamp)
+	}
+
 	ev.QueueID = m[1]
 	ev.Extra = map[string]string{
 		"to":    m[2],

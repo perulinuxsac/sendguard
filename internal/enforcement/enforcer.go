@@ -52,7 +52,7 @@ type Config struct {
 	GeoResolver      *geoip.Resolver   // nil deshabilita la verificación de país en bloqueos
 	AllowedCountries []string          // IPs de estos países no se bloquean en firewall (solo notificación)
 	// NotifyOnActions filtra las notificaciones push (Telegram/email/webhook) por acción.
-	// Si está vacío se notifica todo. Valores: block_ip | suspend_account | rate_limit | purge_queue | notify_only
+	// Si está vacío se notifica todo. Valores activos: block_ip | suspend_account | rate_limit | notify_only
 	NotifyOnActions  []string          // vacío = notificar todo
 }
 

@@ -104,8 +104,9 @@ func severityEmoji(s detection.Severity) string {
 	}
 }
 
-// actionLabel traduce la acción a texto legible.
-func actionLabel(a detection.Action) string {
+// actionLabel traduce la acción a texto legible. Para ActionNotifyOnly usa el
+// módulo para dar contexto específico en lugar de un genérico "Notificación".
+func actionLabel(a detection.Action, module string) string {
 	switch a {
 	case detection.ActionBlockIP:
 		return "IP bloqueada"
@@ -113,10 +114,30 @@ func actionLabel(a detection.Action) string {
 		return "Cuenta suspendida"
 	case detection.ActionRateLimit:
 		return "Rate-limit aplicado"
-	case detection.ActionPurgeQueue:
-		return "Cola purgada"
+	case detection.ActionNotifyOnly:
+		return moduleNotifyLabel(module)
 	default:
 		return "Notificación"
+	}
+}
+
+// moduleNotifyLabel devuelve una etiqueta contextual según el módulo que emite
+// ActionNotifyOnly, para que el administrador identifique el tipo de problema
+// sin leer el cuerpo del mensaje.
+func moduleNotifyLabel(module string) string {
+	switch module {
+	case "queue_monitor":
+		return "Alerta de reputación"
+	case "dist_brute_force":
+		return "Fuerza bruta distribuida"
+	case "domain_discovery":
+		return "Reconocimiento de dominios"
+	case "bounce_rate":
+		return "Tasa de rebote alta"
+	case "account_takeover":
+		return "Posible robo de cuenta"
+	default:
+		return "Actividad sospechosa"
 	}
 }
 
@@ -124,8 +145,10 @@ func actionLabel(a detection.Action) string {
 func formatAlert(alert detection.Alert) string {
 	var sb strings.Builder
 
-	fmt.Fprintf(&sb, "<b>%s — SendGuard</b>\n", severityEmoji(alert.Severity))
-	fmt.Fprintf(&sb, "🔔 <b>%s</b>\n\n", actionLabel(alert.Action))
+	// Cabecera: escudo + severidad en la primera línea para lectura rápida en móvil
+	fmt.Fprintf(&sb, "🛡 <b>SendGuard</b>  %s\n", severityEmoji(alert.Severity))
+	fmt.Fprintf(&sb, "<b>%s</b>  ·  <i>%s</i>\n", actionLabel(alert.Action, alert.Module), alert.Module)
+	sb.WriteString("─────────────────────\n")
 
 	if alert.Server != "" {
 		fmt.Fprintf(&sb, "🖥 Servidor: <code>%s</code>\n", alert.Server)
@@ -139,8 +162,7 @@ func formatAlert(alert detection.Alert) string {
 	if alert.Domain != "" {
 		fmt.Fprintf(&sb, "📧 Dominio: <code>%s</code>\n", alert.Domain)
 	}
-
-	fmt.Fprintf(&sb, "📊 Score: %d | Módulo: %s\n", alert.Score, alert.Module)
+	fmt.Fprintf(&sb, "📊 Score: <b>%d</b>/100\n", alert.Score)
 
 	if len(alert.Reasons) > 0 {
 		fmt.Fprintf(&sb, "\n📋 <i>%s</i>", strings.Join(alert.Reasons, "; "))

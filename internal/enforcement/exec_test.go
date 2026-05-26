@@ -255,7 +255,7 @@ func TestHandlePurgeQueueColasVacias(t *testing.T) {
 
 	e := New(Config{PostfixSbin: sbinDir, PostfixConf: confDir})
 	e.handle(context.Background(), detection.Alert{
-		Module:    "queuemonitor",
+		Module:    "test",
 		Action:    detection.ActionPurgeQueue,
 		Domain:    "target.com",
 		Timestamp: time.Now(),
