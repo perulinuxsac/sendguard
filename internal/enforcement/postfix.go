@@ -10,8 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
+
+// accessFileMu serializa lecturas y escrituras concurrentes de sendguard_access
+// para evitar que dos expiraciones simultáneas de rate-limit sobreescriban sus cambios mutuamente.
+var accessFileMu sync.Mutex
 
 // purgeQueueDomain elimina de la cola diferida de Zimbra todos los mensajes
 // cuyo destinatario pertenece al dominio indicado.
@@ -75,9 +80,12 @@ func extractQueueIDs(data []byte, domain string) []string {
 			continue
 		}
 
-		// Línea de destinatario (empieza por espacio); ignorar líneas de error '('
-		if currentID != "" && line[0] != '(' {
-			if strings.Contains(strings.ToLower(line), suffix) {
+		// Línea de destinatario (empieza por espacio); ignorar líneas de error '(…)'
+		// Postfix indenta las líneas de error con espacios antes del '(', por lo que
+		// line[0] es espacio — hay que verificar el primer carácter sin espacios.
+		if currentID != "" {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" && trimmed[0] != '(' && strings.Contains(strings.ToLower(trimmed), suffix) {
 				ids = append(ids, currentID)
 				// Resetear para no agregar el mismo ID por múltiples rcpt del mismo dominio.
 				currentID = ""
@@ -102,18 +110,24 @@ func rateLimit(ctx context.Context, account string, banSeconds int, sbinDir, con
 	accessFile := filepath.Join(confDir, "sendguard_access")
 	entry := account + " REJECT SendGuard: limite de envio excedido\n"
 
+	// Serializar contra removeRateLimit para evitar que una expiración concurrente
+	// lea el archivo antes de que este append y la regeneración del mapa queden fijos.
+	accessFileMu.Lock()
 	f, err := os.OpenFile(accessFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
+		accessFileMu.Unlock()
 		return fmt.Errorf("abrir access file %s: %w", accessFile, err)
 	}
 	if _, err := f.WriteString(entry); err != nil {
 		f.Close()
+		accessFileMu.Unlock()
 		return fmt.Errorf("escribir en access file: %w", err)
 	}
 	f.Close()
 
 	postmap := filepath.Join(sbinDir, "postmap")
 	out, err := exec.CommandContext(ctx, postmap, "lmdb:"+accessFile).CombinedOutput()
+	accessFileMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("postmap lmdb:%s: %w (output: %s)", accessFile, err, string(out))
 	}
@@ -176,11 +190,13 @@ func parseQueueFull(data []byte) []QueueEntry {
 			}
 			continue
 		}
-		// Línea de destinatario (empieza por espacio); ignorar errores de deferral '('
-		if current != nil && line[0] != '(' {
-			rcpt := strings.TrimSpace(line)
-			if rcpt != "" {
-				current.Recipients = append(current.Recipients, rcpt)
+		// Línea de destinatario (empieza por espacio); ignorar líneas de error '(…)'
+		// Postfix indenta los mensajes de error con espacios antes del '(', por lo que
+		// hay que verificar el primer carácter tras el trim, no line[0].
+		if current != nil {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" && trimmed[0] != '(' {
+				current.Recipients = append(current.Recipients, trimmed)
 			}
 		}
 	}
@@ -197,6 +213,9 @@ func removeRateLimit(account, sbinDir, confDir string) {
 	accessFile := filepath.Join(confDir, "sendguard_access")
 	prefix := account + " "
 
+	accessFileMu.Lock()
+	defer accessFileMu.Unlock()
+
 	data, err := os.ReadFile(accessFile)
 	if err != nil {
 		slog.Warn("enforcement: no se pudo leer access file para limpiar rate-limit",
@@ -211,6 +230,11 @@ func removeRateLimit(account, sbinDir, confDir string) {
 		if !strings.HasPrefix(line, prefix) {
 			filtered = append(filtered, []byte(line+"\n")...)
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		slog.Warn("enforcement: error leyendo access file, se cancela la limpieza de rate-limit",
+			"account", account, "error", err)
+		return
 	}
 
 	if err := os.WriteFile(accessFile, filtered, 0644); err != nil {

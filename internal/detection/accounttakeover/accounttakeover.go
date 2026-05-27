@@ -96,6 +96,11 @@ func (m *Module) recordFailure(ev event.Event) {
 	st := m.getOrCreate(ev.Account)
 	st.failures = trimOld(st.failures, cutoff)
 	st.failures = append(st.failures, failRecord{ip: ev.IP, ts: ev.Timestamp})
+	// Mantener orden cronológico para que trimOld (que asume slice ordenado) funcione
+	// correctamente ante eventos que llegan fuera de orden.
+	for i := len(st.failures) - 1; i > 0 && st.failures[i].ts.Before(st.failures[i-1].ts); i-- {
+		st.failures[i], st.failures[i-1] = st.failures[i-1], st.failures[i]
+	}
 }
 
 // checkPattern1 detecta: AuthFailed × N desde IP X → AuthSuccess desde la misma IP X.
@@ -161,6 +166,22 @@ func (m *Module) checkPattern2(ev event.Event) []detection.Alert {
 	}
 
 	attackerIP := dominantIP(st.failures)
+
+	// Exigir que la IP dominante tenga al menos MinFailures fallos propios.
+	// Sin este filtro, un usuario que tipea mal su contraseña desde varias IPs
+	// (casa, móvil, VPN) acumula el umbral en total sin que ninguna IP individual
+	// sea el atacante — un falso positivo que causaría suspensión injustificada.
+	dominantCount := 0
+	for _, f := range st.failures {
+		if f.ip == attackerIP {
+			dominantCount++
+		}
+	}
+	if dominantCount < m.cfg.MinFailures {
+		delete(m.state, ev.Account)
+		return nil
+	}
+
 	totalFailures := len(st.failures)
 	delete(m.state, ev.Account)
 

@@ -473,22 +473,25 @@ func (e *Enforcer) Stats() EnforcerStats {
 // LoadExistingBans reconstruye el mapa interno de IPs baneadas al arrancar.
 // Estrategia de dos fuentes (en orden de preferencia):
 //  1. SQLite local — expirations exactas, restauración fiable tras reinicio.
-//  2. Firewall     — fallback si SQLite no está configurado o falla la lectura.
+//     Si la lectura tiene éxito (incluso con 0 bans), SQLite es autoritativo
+//     y NO se consulta el firewall (0 bans = todos expiraron limpiamente).
+//  2. Firewall     — fallback solo si SQLite no está configurado o devuelve error.
 func (e *Enforcer) LoadExistingBans(ctx context.Context) {
 	if e.cfg.Store != nil {
-		if loaded := e.loadBansFromStore(); loaded > 0 {
-			return
+		if _, ok := e.loadBansFromStore(); ok {
+			return // SQLite accesible — no reimportar reglas del firewall
 		}
 	}
 	e.loadBansFromFirewalld(ctx)
 }
 
-// loadBansFromStore restaura bans desde SQLite. Retorna el número de IPs cargadas.
-func (e *Enforcer) loadBansFromStore() int {
+// loadBansFromStore restaura bans desde SQLite.
+// Retorna (número de IPs cargadas, true) en éxito, (0, false) si la lectura falla.
+func (e *Enforcer) loadBansFromStore() (int, bool) {
 	bans, err := e.cfg.Store.LoadActiveBans()
 	if err != nil {
 		slog.Warn("enforcement: no se pudo leer bans de SQLite, usando firewall", "error", err)
-		return 0
+		return 0, false
 	}
 
 	loaded := 0
@@ -507,7 +510,7 @@ func (e *Enforcer) loadBansFromStore() int {
 	if loaded > 0 {
 		slog.Info("enforcement: bans restaurados desde SQLite", "count", loaded)
 	}
-	return loaded
+	return loaded, true
 }
 
 // loadBansFromFirewalld restaura bans leyendo las reglas activas del firewall.

@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -320,7 +321,14 @@ func (s *Server) handleBlock(w http.ResponseWriter, r *http.Request) {
 	// ?ttl=0 → config, ?ttl=-1 → permanente, ?ttl=N → N segundos
 	ttl := 0
 	if v := r.URL.Query().Get("ttl"); v != "" {
-		fmt.Sscanf(v, "%d", &ttl)
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "ttl debe ser un entero (0=config, -1=permanente, N=segundos)",
+			})
+			return
+		}
+		ttl = n
 	}
 
 	if err := s.deps.Enforcer.Block(r.Context(), ip, ttl); err != nil {

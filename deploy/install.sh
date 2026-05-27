@@ -151,7 +151,7 @@ cfg_get() {
     [[ -f "$CONFIG_FILE" ]] || return
     grep -m1 "^[[:space:]]*${key}:" "$CONFIG_FILE" 2>/dev/null \
         | sed 's/[^:]*:[[:space:]]*//' | tr -d '"' | tr -d "'" \
-        | sed 's/[[:space:]]*#.*$//; s/^[[:space:]]*//; s/[[:space:]]*$//'
+        | sed 's/[[:space:]]\+#.*$//; s/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
 # Extrae una lista YAML (items con "    - value") como cadena separada por comas
@@ -160,7 +160,7 @@ cfg_get_list() {
     [[ -f "$CONFIG_FILE" ]] || return
     # Captura las líneas de lista que siguen a la clave hasta la siguiente clave
     awk "/^[[:space:]]*${key}:/{found=1; next}
-         found && /^[[:space:]]*- /{gsub(/^[[:space:]]*- |\"/, \"\"); gsub(/[[:space:]]*#.*$/, \"\"); printf \"%s,\", \$0; next}
+         found && /^[[:space:]]*- /{gsub(/^[[:space:]]*- |\"/, \"\"); gsub(/[[:space:]]+#.*$/, \"\"); printf \"%s,\", \$0; next}
          found && /^[[:space:]]*[a-z]/{exit}" \
         "$CONFIG_FILE" 2>/dev/null | sed 's/,$//'
 }
@@ -176,7 +176,7 @@ cfg_get_under() {
         in_sec && /^[[:space:]]+${key}:/{
             sub(/^[^:]*:[[:space:]]*/, \"\")
             gsub(/[\"']/, \"\")
-            gsub(/[[:space:]]*#.*$/, \"\")
+            gsub(/[[:space:]]+#.*$/, \"\")
             print; exit
         }
     " "$CONFIG_FILE" 2>/dev/null

@@ -171,7 +171,10 @@ func (f *Forwarder) syncBatch(ctx context.Context) {
 			Country:   pe.Event.Country,
 		}
 		var meta alertMeta
-		if err := json.Unmarshal([]byte(pe.Event.Raw), &meta); err == nil {
+		if err := json.Unmarshal([]byte(pe.Event.Raw), &meta); err != nil {
+			slog.Warn("forwarder: metadatos de alerta corruptos, se enviará sin módulo/score",
+				"id", pe.ID, "error", err)
+		} else {
 			p.Module = meta.Module
 			p.Score = meta.Score
 			p.Severity = meta.Severity

@@ -161,14 +161,15 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 	}
 
 	prev, hasPrev := m.lastLogins[ev.Account]
-	m.lastLogins[ev.Account] = current
 
 	if !hasPrev {
+		m.lastLogins[ev.Account] = current
 		return nil
 	}
 
 	// Si el país no cambió, no hay viaje imposible.
 	if prev.country == country {
+		m.lastLogins[ev.Account] = current
 		return nil
 	}
 
@@ -180,12 +181,26 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 	}
 
 	if elapsed >= window {
+		m.lastLogins[ev.Account] = current
 		return nil // tiempo suficiente para viajar entre países
 	}
 
 	// Si ambos países están en la whitelist no hay anomalía (ej: PE + ES ambos permitidos).
 	if m.cfg.isAllowed(prev.country) && m.cfg.isAllowed(country) {
+		m.lastLogins[ev.Account] = current
 		return nil
+	}
+
+	// Alerta detectada: actualizar lastLogins a la ubicación sospechosa pero con
+	// timestamp retrocedido en una ventana completa. Esto consigue dos cosas:
+	//   1. El próximo login del atacante desde el mismo país (CN→CN) ve prev.country==country
+	//      → no alerta (previene flood de notificaciones mientras la suspensión tarda en actuar).
+	//   2. El usuario legítimo que regresa a su país real (PE después de ataque CN) ve
+	//      elapsed ≥ window → no alerta (evita el falso positivo de suspensión del usuario real).
+	m.lastLogins[ev.Account] = loginRecord{
+		country:   country,
+		ip:        ev.IP,
+		timestamp: ev.Timestamp.Add(-window),
 	}
 
 	score := 85
