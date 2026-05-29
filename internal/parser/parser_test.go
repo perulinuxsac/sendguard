@@ -195,8 +195,8 @@ func TestParseMailboxLine(t *testing.T) {
 	}{
 		// --- AuthFailed ---
 		{
-			name: "imap fallo con cuenta en mensaje",
-			line: `2024-05-11 10:23:45,207 WARN  [ImapServer-1] [ip=1.2.3.4;ua=Thunderbird;] imap - authentication failed for [user@domain.com] (invalid password)`,
+			name:   "imap fallo con cuenta en mensaje",
+			line:   `2024-05-11 10:23:45,207 WARN  [ImapServer-1] [ip=1.2.3.4;ua=Thunderbird;] imap - authentication failed for [user@domain.com] (invalid password)`,
 			wantOK: true,
 			wantEv: event.Event{
 				Type:    event.AuthFailed,
@@ -207,8 +207,8 @@ func TestParseMailboxLine(t *testing.T) {
 			},
 		},
 		{
-			name: "pop3 fallo",
-			line: `2024-05-11 08:00:01,943 WARN  [Pop3Server-3] [ip=5.6.7.8;ua=Outlook;] pop3 - authentication failed for [victim@company.com] (no such account)`,
+			name:   "pop3 fallo",
+			line:   `2024-05-11 08:00:01,943 WARN  [Pop3Server-3] [ip=5.6.7.8;ua=Outlook;] pop3 - authentication failed for [victim@company.com] (no such account)`,
 			wantOK: true,
 			wantEv: event.Event{
 				Type:    event.AuthFailed,
@@ -219,8 +219,8 @@ func TestParseMailboxLine(t *testing.T) {
 			},
 		},
 		{
-			name: "soap fallo (webmail)",
-			line: `2024-05-11 09:15:00,001 WARN  [qtp12345-7] [ip=203.0.113.9;ua=ZimbraWebClient;] soap - authentication failed for [admin@domain.com] (invalid credentials)`,
+			name:   "soap fallo (webmail)",
+			line:   `2024-05-11 09:15:00,001 WARN  [qtp12345-7] [ip=203.0.113.9;ua=ZimbraWebClient;] soap - authentication failed for [admin@domain.com] (invalid credentials)`,
 			wantOK: true,
 			wantEv: event.Event{
 				Type:    event.AuthFailed,
@@ -230,8 +230,8 @@ func TestParseMailboxLine(t *testing.T) {
 			},
 		},
 		{
-			name: "imap fallo — oip tiene prioridad sobre ip (proxy delante)",
-			line: `2024-05-11 10:23:45,100 WARN  [ImapSSLServer-5] [ip=10.0.0.1;oip=203.0.113.55;ua=Mail;] imap - authentication failed for [user@domain.com] (invalid password)`,
+			name:   "imap fallo — oip tiene prioridad sobre ip (proxy delante)",
+			line:   `2024-05-11 10:23:45,100 WARN  [ImapSSLServer-5] [ip=10.0.0.1;oip=203.0.113.55;ua=Mail;] imap - authentication failed for [user@domain.com] (invalid password)`,
 			wantOK: true,
 			wantEv: event.Event{
 				Type: event.AuthFailed,
@@ -239,8 +239,8 @@ func TestParseMailboxLine(t *testing.T) {
 			},
 		},
 		{
-			name: "imap fallo — cuenta en contexto (name=) cuando fallo ocurre tras identificación",
-			line: `2024-05-11 10:23:45,300 WARN  [ImapServer-2] [name=user@domain.com;ip=1.2.3.4;] imap - authentication failed for [user@domain.com] (invalid password)`,
+			name:   "imap fallo — cuenta en contexto (name=) cuando fallo ocurre tras identificación",
+			line:   `2024-05-11 10:23:45,300 WARN  [ImapServer-2] [name=user@domain.com;ip=1.2.3.4;] imap - authentication failed for [user@domain.com] (invalid password)`,
 			wantOK: true,
 			wantEv: event.Event{
 				Type:    event.AuthFailed,
@@ -251,8 +251,8 @@ func TestParseMailboxLine(t *testing.T) {
 
 		// --- AuthSuccess ---
 		{
-			name: "imap éxito con mecanismo LOGIN",
-			line: `2024-05-11 10:23:45,207 INFO  [ImapSSLServer-13] [name=user@domain.com;ip=1.2.3.4;oip=5.6.7.8;ua=Thunderbird;] imap - user user@domain.com authenticated, mechanism=LOGIN [TLS]`,
+			name:   "imap éxito con mecanismo LOGIN",
+			line:   `2024-05-11 10:23:45,207 INFO  [ImapSSLServer-13] [name=user@domain.com;ip=1.2.3.4;oip=5.6.7.8;ua=Thunderbird;] imap - user user@domain.com authenticated, mechanism=LOGIN [TLS]`,
 			wantOK: true,
 			wantEv: event.Event{
 				Type:    event.AuthSuccess,
@@ -263,8 +263,8 @@ func TestParseMailboxLine(t *testing.T) {
 			},
 		},
 		{
-			name: "pop3 éxito",
-			line: `2024-05-11 11:00:00,500 INFO  [Pop3Server-1] [name=alice@example.com;ip=10.20.30.40;] pop3 - user alice@example.com authenticated`,
+			name:   "pop3 éxito",
+			line:   `2024-05-11 11:00:00,500 INFO  [Pop3Server-1] [name=alice@example.com;ip=10.20.30.40;] pop3 - user alice@example.com authenticated`,
 			wantOK: true,
 			wantEv: event.Event{
 				Type:    event.AuthSuccess,
@@ -275,8 +275,8 @@ func TestParseMailboxLine(t *testing.T) {
 			},
 		},
 		{
-			name: "soap éxito (webmail)",
-			line: `2024-05-11 14:30:00,000 INFO  [qtp99887-3] [name=bob@corp.com;ip=192.168.1.100;oip=8.8.8.8;ua=ZimbraWebClient;] soap - user bob@corp.com authenticated`,
+			name:   "soap éxito (webmail)",
+			line:   `2024-05-11 14:30:00,000 INFO  [qtp99887-3] [name=bob@corp.com;ip=192.168.1.100;oip=8.8.8.8;ua=ZimbraWebClient;] soap - user bob@corp.com authenticated`,
 			wantOK: true,
 			wantEv: event.Event{
 				Type:    event.AuthSuccess,

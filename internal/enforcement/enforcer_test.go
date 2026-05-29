@@ -20,11 +20,11 @@ func TestIsValidIPRechazaInvalidas(t *testing.T) {
 	invalid := []string{
 		"",
 		"not-an-ip",
-		"::1",               // IPv6
-		"2001:db8::1",       // IPv6
-		"256.0.0.1",         // fuera de rango
-		"1.2.3",             // incompleta
-		"1.2.3.4.5",         // demasiados octetos
+		"::1",         // IPv6
+		"2001:db8::1", // IPv6
+		"256.0.0.1",   // fuera de rango
+		"1.2.3",       // incompleta
+		"1.2.3.4.5",   // demasiados octetos
 	}
 	for _, ip := range invalid {
 		if isValidIP(ip) {
@@ -141,7 +141,7 @@ func TestBlockedIPsFiltradoExpiradas(t *testing.T) {
 
 	now := time.Now()
 	e.mu.Lock()
-	e.blockedIPs["1.2.3.4"] = blockedIP{expiry: now.Add(time.Hour), module: "test"}   // vigente
+	e.blockedIPs["1.2.3.4"] = blockedIP{expiry: now.Add(time.Hour), module: "test"}    // vigente
 	e.blockedIPs["5.6.7.8"] = blockedIP{expiry: now.Add(-time.Second), module: "test"} // expirada
 	e.mu.Unlock()
 
@@ -221,8 +221,8 @@ func TestLoadExistingBansParseoMultiplesLineas(t *testing.T) {
 	lines := []string{
 		`rule family="ipv4" source address="1.1.1.1" reject`,
 		`rule family="ipv4" source address="2.2.2.2" reject`,
-		`rule family="ipv6" source address="::1" reject`,      // debe ignorarse
-		`rule priority="0" service name="ssh" accept`,         // sin address, debe ignorarse
+		`rule family="ipv6" source address="::1" reject`, // debe ignorarse
+		`rule priority="0" service name="ssh" accept`,    // sin address, debe ignorarse
 		`rule family="ipv4" source address="3.3.3.3" reject`,
 	}
 	ips := []string{}

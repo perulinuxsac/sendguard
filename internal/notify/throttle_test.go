@@ -28,10 +28,10 @@ func TestThrottle_KeyCooldown(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	th.Notify(ctx, alert("1.2.3.4", "", "auth_failed"))  // pasa
-	th.Notify(ctx, alert("1.2.3.4", "", "auth_failed"))  // suprimida (cooldown)
+	th.Notify(ctx, alert("1.2.3.4", "", "auth_failed"))    // pasa
+	th.Notify(ctx, alert("1.2.3.4", "", "auth_failed"))    // suprimida (cooldown)
 	th.Notify(ctx, alert("1.2.3.4", "", "password_spray")) // suprimida (misma IP)
-	th.Notify(ctx, alert("5.5.5.5", "", "auth_failed"))  // pasa (IP distinta)
+	th.Notify(ctx, alert("5.5.5.5", "", "auth_failed"))    // pasa (IP distinta)
 
 	if got := inner.calls.Load(); got != 2 {
 		t.Errorf("esperadas 2 notificaciones enviadas, got %d", got)
@@ -93,8 +93,8 @@ func TestThrottle_ClaveEsCuenta(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	th.Notify(ctx, alert("", "user@x.com", "bounce_rate")) // pasa
-	th.Notify(ctx, alert("", "user@x.com", "bounce_rate")) // suprimida (misma cuenta)
+	th.Notify(ctx, alert("", "user@x.com", "bounce_rate"))  // pasa
+	th.Notify(ctx, alert("", "user@x.com", "bounce_rate"))  // suprimida (misma cuenta)
 	th.Notify(ctx, alert("", "other@x.com", "bounce_rate")) // pasa (cuenta distinta)
 
 	if got := inner.calls.Load(); got != 2 {

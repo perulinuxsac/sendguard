@@ -55,10 +55,10 @@ type mockEngine struct {
 	domains []detection.DomainStat
 }
 
-func (m *mockEngine) EventsTotal() int64                    { return m.events }
-func (m *mockEngine) AlertsTotal() int64                    { return m.alerts }
-func (m *mockEngine) DomainStats() []detection.DomainStat  { return m.domains }
-func (m *mockEngine) ModuleStats() []detection.ModuleStat  { return nil }
+func (m *mockEngine) EventsTotal() int64                  { return m.events }
+func (m *mockEngine) AlertsTotal() int64                  { return m.alerts }
+func (m *mockEngine) DomainStats() []detection.DomainStat { return m.domains }
+func (m *mockEngine) ModuleStats() []detection.ModuleStat { return nil }
 
 func newTestServer(enf *mockEnforcer, eng *mockEngine) *api.Server {
 	return api.New("127.0.0.1:0", api.Dependencies{
@@ -358,11 +358,11 @@ type mockWhitelist struct {
 	addIPErr error
 }
 
-func (m *mockWhitelist) List() ([]string, []string)  { return m.ips, m.accounts }
-func (m *mockWhitelist) AddIP(ip string) error        { m.ips = append(m.ips, ip); return m.addIPErr }
-func (m *mockWhitelist) RemoveIP(ip string)           { /* simplificado para tests */ }
-func (m *mockWhitelist) AddAccount(a string)          { m.accounts = append(m.accounts, a) }
-func (m *mockWhitelist) RemoveAccount(a string)       { /* simplificado para tests */ }
+func (m *mockWhitelist) List() ([]string, []string) { return m.ips, m.accounts }
+func (m *mockWhitelist) AddIP(ip string) error      { m.ips = append(m.ips, ip); return m.addIPErr }
+func (m *mockWhitelist) RemoveIP(ip string)         { /* simplificado para tests */ }
+func (m *mockWhitelist) AddAccount(a string)        { m.accounts = append(m.accounts, a) }
+func (m *mockWhitelist) RemoveAccount(a string)     { /* simplificado para tests */ }
 
 func newFullTestServer(enf *mockEnforcer, eng *mockEngine, opts ...func(*api.Dependencies)) *api.Server {
 	deps := api.Dependencies{

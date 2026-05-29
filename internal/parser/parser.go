@@ -133,8 +133,8 @@ type senderEntry struct {
 //
 // Solo ParseLine accede a estos mapas; no hay acceso concurrente.
 type Parser struct {
-	authedQueues map[string]authedEntry  // queueID → {account, timestamp} de auth SASL
-	queueSenders map[string]senderEntry  // queueID → cuenta del remitente autenticado
+	authedQueues map[string]authedEntry // queueID → {account, timestamp} de auth SASL
+	queueSenders map[string]senderEntry // queueID → cuenta del remitente autenticado
 	queueCallCnt int
 }
 

@@ -78,10 +78,10 @@ type loginRecord struct {
 // Module implementa detection.Module para la detección de viaje imposible.
 // No es thread-safe: debe ser llamado exclusivamente desde el goroutine del Engine.
 type Module struct {
-	cfg          Config
-	geoip        CountryLookup
-	lastLogins   map[string]loginRecord // account → último login
-	trustedNets  []*net.IPNet           // rangos de proxies conocidos (parseados al inicio)
+	cfg         Config
+	geoip       CountryLookup
+	lastLogins  map[string]loginRecord // account → último login
+	trustedNets []*net.IPNet           // rangos de proxies conocidos (parseados al inicio)
 }
 
 // New crea un módulo ImpossibleTraveler con la configuración y resolver GeoIP dados.

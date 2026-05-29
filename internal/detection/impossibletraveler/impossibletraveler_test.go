@@ -376,9 +376,9 @@ func TestTrustedOrgDoesNotOverwriteLocation(t *testing.T) {
 	}
 	geo := &mockGeoIP{
 		countries: map[string]string{
-			"1.1.1.1":     "PE",
+			"1.1.1.1":      "PE",
 			"52.97.30.229": "US",
-			"3.3.3.3":     "CN",
+			"3.3.3.3":      "CN",
 		},
 		orgs: map[string]string{
 			"52.97.30.229": "AS8075 MICROSOFT-CORP-MSN-AS-BLOCK",

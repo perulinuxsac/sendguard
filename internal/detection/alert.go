@@ -6,9 +6,9 @@ import "time"
 type Action string
 
 const (
-	ActionBlockIP       Action = "block_ip"         // bloquear IP vía firewalld
-	ActionUnblockIP     Action = "unblock_ip"       // desbloquear IP manualmente
-	ActionSuspendAcct   Action = "suspend_account"  // zmprov zimbraAccountStatus locked
+	ActionBlockIP       Action = "block_ip"          // bloquear IP vía firewalld
+	ActionUnblockIP     Action = "unblock_ip"        // desbloquear IP manualmente
+	ActionSuspendAcct   Action = "suspend_account"   // zmprov zimbraAccountStatus locked
 	ActionUnsuspendAcct Action = "unsuspend_account" // zmprov zimbraAccountStatus active
 	ActionRateLimit     Action = "rate_limit"        // limitar envíos vía Postfix policy
 	ActionPurgeQueue    Action = "purge_queue"       // purgar cola Postfix (infraestructura; no emitido automáticamente por ningún módulo)

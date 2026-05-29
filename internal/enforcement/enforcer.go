@@ -38,22 +38,22 @@ type IPWhitelist interface {
 
 // Config agrupa los parámetros del Enforcer.
 type Config struct {
-	FirewallBackend string            // "firewalld" (RHEL) o "ufw" (Ubuntu); default: firewalld
-	BanSeconds      int               // duración del bloqueo de IP (0 = permanente)
-	ZmprovBin       string            // ruta completa a zmprov (default: /opt/zimbra/bin/zmprov)
-	PostfixSbin     string            // /opt/zimbra/common/sbin — binarios de Postfix de Zimbra
-	PostfixConf     string            // /opt/zimbra/common/conf — config de Postfix de Zimbra
-	Notifier        notify.Notifier   // nil usa Noop (sin notificaciones)
-	AbuseIPDB       *abuseipdb.Client // nil deshabilita la consulta de reputación
-	AuditLog        *audit.Logger     // nil deshabilita el audit log
-	Store           *store.Store      // nil deshabilita la persistencia local SQLite
-	Forwarder       AlertForwarder    // nil deshabilita el StoreAndForward
-	Whitelist       IPWhitelist       // nil deshabilita la sincronización con el engine
+	FirewallBackend  string            // "firewalld" (RHEL) o "ufw" (Ubuntu); default: firewalld
+	BanSeconds       int               // duración del bloqueo de IP (0 = permanente)
+	ZmprovBin        string            // ruta completa a zmprov (default: /opt/zimbra/bin/zmprov)
+	PostfixSbin      string            // /opt/zimbra/common/sbin — binarios de Postfix de Zimbra
+	PostfixConf      string            // /opt/zimbra/common/conf — config de Postfix de Zimbra
+	Notifier         notify.Notifier   // nil usa Noop (sin notificaciones)
+	AbuseIPDB        *abuseipdb.Client // nil deshabilita la consulta de reputación
+	AuditLog         *audit.Logger     // nil deshabilita el audit log
+	Store            *store.Store      // nil deshabilita la persistencia local SQLite
+	Forwarder        AlertForwarder    // nil deshabilita el StoreAndForward
+	Whitelist        IPWhitelist       // nil deshabilita la sincronización con el engine
 	GeoResolver      *geoip.Resolver   // nil deshabilita la verificación de país en bloqueos
 	AllowedCountries []string          // IPs de estos países no se bloquean en firewall (solo notificación)
 	// NotifyOnActions filtra las notificaciones push (Telegram/email/webhook) por acción.
 	// Si está vacío se notifica todo. Valores activos: block_ip | suspend_account | rate_limit | notify_only
-	NotifyOnActions  []string          // vacío = notificar todo
+	NotifyOnActions []string // vacío = notificar todo
 }
 
 // blockedIP registra cuándo expira el baneo de una IP para evitar
@@ -86,14 +86,14 @@ type EnforcerStats struct {
 // Enforcer recibe alertas del Engine y ejecuta acciones de contención.
 // Es thread-safe.
 type Enforcer struct {
-	cfg              Config
-	fw               fw
-	mu               sync.Mutex
-	blockedIPs       map[string]blockedIP
-	suspendedAccts   map[string]suspendedAcct
-	blocksTotal      atomic.Int64
-	suspsTotal       atomic.Int64
-	ratesTotal       atomic.Int64
+	cfg            Config
+	fw             fw
+	mu             sync.Mutex
+	blockedIPs     map[string]blockedIP
+	suspendedAccts map[string]suspendedAcct
+	blocksTotal    atomic.Int64
+	suspsTotal     atomic.Int64
+	ratesTotal     atomic.Int64
 }
 
 // New crea un Enforcer con la configuración dada.
@@ -110,12 +110,12 @@ func New(cfg Config) *Enforcer {
 }
 
 // Run procesa alertas hasta que ctx sea cancelado.
-// Para el backend ufw, lanza también un goroutine que desbloquea IPs expiradas
-// (ufw no tiene --timeout nativo; el desbloqueo es responsabilidad del agente).
+// Lanza también un goroutine de mantenimiento que limpia los bans expirados.
+// Con ufw esto incluye eliminar la regla del firewall (ufw no tiene --timeout
+// nativo); con firewalld la regla expira sola y solo se limpia el estado interno
+// (mapa en memoria + whitelist del engine + SQLite).
 func (e *Enforcer) Run(ctx context.Context, alertCh <-chan detection.Alert) {
-	if e.cfg.FirewallBackend == "ufw" && e.cfg.BanSeconds > 0 {
-		go e.runUnbanLoop(ctx)
-	}
+	go e.runUnbanLoop(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -129,8 +129,9 @@ func (e *Enforcer) Run(ctx context.Context, alertCh <-chan detection.Alert) {
 	}
 }
 
-// runUnbanLoop comprueba cada 30 s si hay bans expirados y los elimina del firewall.
-// Solo se usa con el backend ufw (firewalld expira sus reglas con --timeout).
+// runUnbanLoop comprueba cada 30 s si hay bans expirados y limpia su estado.
+// Para ufw elimina además la regla del firewall; para firewalld la regla ya
+// expiró por --timeout y solo se purga el estado interno del agente.
 func (e *Enforcer) runUnbanLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -158,10 +159,16 @@ func (e *Enforcer) unbanExpired(ctx context.Context) {
 	e.mu.Unlock()
 
 	for _, ip := range expired {
-		if err := e.fw.Unblock(ctx, ip); err != nil {
-			slog.Warn("enforcement: fallo al desbloquear IP expirada", "ip", ip, "error", err)
+		// firewalld expira la regla con --timeout; solo ufw requiere eliminarla
+		// explícitamente. Para firewalld nos limitamos a purgar el estado interno.
+		if e.cfg.FirewallBackend == "ufw" {
+			if err := e.fw.Unblock(ctx, ip); err != nil {
+				slog.Warn("enforcement: fallo al desbloquear IP expirada", "ip", ip, "error", err)
+			} else {
+				slog.Info("enforcement: ban expirado, IP desbloqueada", "ip", ip)
+			}
 		} else {
-			slog.Info("enforcement: ban expirado, IP desbloqueada", "ip", ip)
+			slog.Info("enforcement: ban expirado, estado interno purgado", "ip", ip)
 		}
 		if e.cfg.Store != nil {
 			e.cfg.Store.DeleteBan(ip)

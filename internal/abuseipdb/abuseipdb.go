@@ -22,17 +22,21 @@ type Config struct {
 
 // Report es la respuesta simplificada de AbuseIPDB para una IP.
 type Report struct {
-	IP              string
-	AbuseScore      int  // 0-100: confianza de que la IP es abusiva
-	TotalReports    int  // número total de reportes recibidos
-	IsWhitelisted   bool // si AbuseIPDB la tiene como whitelist
-	CountryCode     string
+	IP            string
+	AbuseScore    int  // 0-100: confianza de que la IP es abusiva
+	TotalReports  int  // número total de reportes recibidos
+	IsWhitelisted bool // si AbuseIPDB la tiene como whitelist
+	CountryCode   string
 }
 
 type cacheEntry struct {
 	report Report
 	expiry time.Time
 }
+
+// maxCacheEntries limita el tamaño de la caché en memoria. Al superarse se eliminan
+// las entradas expiradas para evitar crecimiento ilimitado ante muchas IPs distintas.
+const maxCacheEntries = 10_000
 
 // Client consulta la API de AbuseIPDB con caché en memoria.
 type Client struct {
@@ -141,5 +145,13 @@ func (c *Client) fromCache(ip string) (Report, bool) {
 func (c *Client) toCache(ip string, r Report) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if len(c.cache) >= maxCacheEntries {
+		now := time.Now()
+		for k, e := range c.cache {
+			if now.After(e.expiry) {
+				delete(c.cache, k)
+			}
+		}
+	}
 	c.cache[ip] = cacheEntry{report: r, expiry: time.Now().Add(c.cfg.CacheTTL)}
 }

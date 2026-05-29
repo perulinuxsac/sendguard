@@ -37,9 +37,9 @@ import (
 )
 
 const (
-	defaultListen   = "127.0.0.1:9100"
-	cacheTTL        = 10 * time.Second
-	agentTimeout    = 500 * time.Millisecond // el agente es local — 500 ms es generoso
+	defaultListen = "127.0.0.1:9100"
+	cacheTTL      = 10 * time.Second
+	agentTimeout  = 500 * time.Millisecond // el agente es local — 500 ms es generoso
 )
 
 // cacheEntry almacena el resultado de una consulta al agente con su expiración.
@@ -121,9 +121,13 @@ func handleConn(ctx context.Context, conn net.Conn, chk *checker, wg *sync.WaitG
 	defer wg.Done()
 	defer conn.Close()
 
-	// Cerrar la conexión cuando el contexto sea cancelado (shutdown).
+	// Cerrar la conexión cuando el contexto sea cancelado (shutdown). El context
+	// por conexión se cancela al salir de handleConn, lo que libera esta goroutine
+	// y evita su acumulación con conexiones de vida corta.
+	connCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	go func() {
-		<-ctx.Done()
+		<-connCtx.Done()
 		conn.Close()
 	}()
 

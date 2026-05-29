@@ -219,15 +219,15 @@ func buildHTML(alert detection.Alert, ts time.Time) string {
 </table>
 </body>
 </html>`,
-		headerColor(alert.Severity),          // cabecera bg
-		sev,                                   // badge severidad
-		sevBg, sevColor,                       // acción bg / border
-		sevColor,                              // acción texto color
-		icon, html.EscapeString(act),          // icono + texto acción
-		sevColor,                              // score color
-		alert.Score,                           // score valor
-		rows.String(),                         // filas de detalles
-		reasonsHTML,                           // bloque razones
+		headerColor(alert.Severity), // cabecera bg
+		sev,                         // badge severidad
+		sevBg, sevColor,             // acción bg / border
+		sevColor,                     // acción texto color
+		icon, html.EscapeString(act), // icono + texto acción
+		sevColor,                                // score color
+		alert.Score,                             // score valor
+		rows.String(),                           // filas de detalles
+		reasonsHTML,                             // bloque razones
 		ts.Format("2006-01-02 15:04:05 -07:00"), // timestamp footer
 	)
 }

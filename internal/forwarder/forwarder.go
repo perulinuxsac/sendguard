@@ -66,7 +66,7 @@ type alertMeta struct {
 // el Controller pueda consumirlos sin doble-parseo.
 type ControllerAlertPayload struct {
 	ID        int64     `json:"id"`
-	Type      string    `json:"type"`              // acción: block_ip, suspend_account, etc.
+	Type      string    `json:"type"` // acción: block_ip, suspend_account, etc.
 	Module    string    `json:"module"`
 	Score     int       `json:"score"`
 	Severity  int       `json:"severity"`

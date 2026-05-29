@@ -278,7 +278,7 @@ func TestRunPruneTicker(t *testing.T) {
 	s := openMemoryStore(t)
 	f := New(Config{
 		Store:         s,
-		SyncInterval:  time.Hour,            // no disparar sync
+		SyncInterval:  time.Hour,             // no disparar sync
 		pruneInterval: 10 * time.Millisecond, // disparar prune rápidamente
 	})
 

@@ -186,10 +186,18 @@ func (e *Engine) Run(ctx context.Context, eventCh <-chan event.Event) {
 }
 
 // SetProxyCIDRs registra rangos de proxies cloud (Microsoft, Google, Apple…).
-// Los eventos cuya IP caiga en estos rangos tendrán la IP limpiada antes de ser
-// despachados: los módulos IP-céntricos (auth_failed, rcpt_flood…) no cuentan la
-// IP de proxy, pero los módulos de cuenta (sasl_connections, impossible_traveler…)
-// siguen operando con normalidad.
+// Los eventos cuya IP caiga en estos rangos tendrán la IP limpiada (ev.IP="")
+// antes de ser despachados. Efecto por módulo:
+//   - auth_failed, rcpt_flood, password_spray, domain_discovery: ignoran el evento
+//     (requieren ev.IP) → no se bloquea la IP del proxy.
+//   - impossible_traveler: ignora el login (requiere ev.IP) → un login vía proxy
+//     no actualiza ni compara ubicación. (El módulo tiene además sus propios
+//     trusted_cidrs/trusted_orgs para casos no cubiertos por esta lista global.)
+//   - sasl_connections: la señal por conexiones totales (Max) sigue contando, pero
+//     la señal por IPs únicas (MaxUniqueIPs) no cuenta la IP en blanco.
+//   - account_takeover: la correlación por cuenta sigue, pero los registros con IP
+//     en blanco no aportan al recuento por IP atacante.
+//
 // Llamar antes de Run().
 func (e *Engine) SetProxyCIDRs(cidrs []string) {
 	for _, raw := range cidrs {
@@ -226,9 +234,8 @@ func (e *Engine) dispatch(ev event.Event) {
 		return
 	}
 	// Si la IP es de un proxy cloud conocido, limpiarla para que los módulos
-	// IP-céntricos (auth_failed, rcpt_flood, etc.) no la bloqueen. Los módulos
-	// que trabajan por cuenta (sasl_connections, impossible_traveler) no se ven
-	// afectados porque usan ev.Account, no ev.IP.
+	// IP-céntricos (auth_failed, rcpt_flood, etc.) no la bloqueen. Ver SetProxyCIDRs
+	// para el efecto exacto sobre cada módulo.
 	if ev.IP != "" && e.isProxyIP(ev.IP) {
 		ev.IP = ""
 	}

@@ -24,6 +24,9 @@ import (
 const (
 	httpTimeout  = 3 * time.Second
 	maxBodyBytes = 1024
+	// maxCacheEntries limita el tamaño de la caché HTTP. Al superarse se purgan las
+	// entradas expiradas para evitar crecimiento ilimitado ante muchas IPs distintas.
+	maxCacheEntries = 10_000
 )
 
 // Resolver resuelve IPs a códigos de país.
@@ -75,6 +78,12 @@ func (r *Resolver) Close() {
 	if r.db != nil {
 		r.db.Close()
 	}
+}
+
+// OrgAvailable indica si el resolver puede devolver datos de organización/ASN.
+// Solo el modo HTTP API los provee; la DB local GeoLite2-Country no incluye org.
+func (r *Resolver) OrgAvailable() bool {
+	return r.db == nil
 }
 
 // Country retorna el código ISO 3166-1 alpha-2 para la IP dada (ej: "PE", "US").
@@ -139,6 +148,14 @@ func (r *Resolver) lookupAPI(ip string) string {
 	}
 
 	r.mu.Lock()
+	if len(r.cache) >= maxCacheEntries {
+		now := time.Now()
+		for k, e := range r.cache {
+			if now.After(e.expiry) {
+				delete(r.cache, k)
+			}
+		}
+	}
 	r.cache[ip] = cacheEntry{
 		country: country,
 		org:     org,

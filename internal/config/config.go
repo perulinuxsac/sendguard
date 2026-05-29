@@ -8,25 +8,25 @@ import (
 )
 
 type Config struct {
-	ServerID     string          `yaml:"server_id"`
-	ClientName   string          `yaml:"client_name"`
-	Zimbra       ZimbraConf      `yaml:"zimbra"`
-	Rules        Rules           `yaml:"rules"`
-	GeoIP        GeoIPConf       `yaml:"geoip"`
-	AbuseIPDB    AbuseIPDBConf   `yaml:"abuseipdb"`
-	AuditLog     AuditLogConf    `yaml:"audit_log"`
-	LocalDB      LocalDBConf     `yaml:"local_db"`
-	Controller   ControllerConf  `yaml:"controller"`
-	Firewall     FirewallConf    `yaml:"firewall"`
-	Whitelist    Whitelist       `yaml:"whitelist"`
+	ServerID   string         `yaml:"server_id"`
+	ClientName string         `yaml:"client_name"`
+	Zimbra     ZimbraConf     `yaml:"zimbra"`
+	Rules      Rules          `yaml:"rules"`
+	GeoIP      GeoIPConf      `yaml:"geoip"`
+	AbuseIPDB  AbuseIPDBConf  `yaml:"abuseipdb"`
+	AuditLog   AuditLogConf   `yaml:"audit_log"`
+	LocalDB    LocalDBConf    `yaml:"local_db"`
+	Controller ControllerConf `yaml:"controller"`
+	Firewall   FirewallConf   `yaml:"firewall"`
+	Whitelist  Whitelist      `yaml:"whitelist"`
 	// ProxyCIDRs: rangos de proxies cloud legítimos (Microsoft, Google, Apple…).
 	// Los eventos de estas IPs no activan módulos IP-céntricos (auth_failed, rcpt_flood)
 	// pero sí los de cuenta (sasl_connections, impossible_traveler).
-	ProxyCIDRs   []string          `yaml:"proxy_cidrs"`
-	Notification NotifyConf        `yaml:"notification"`
-	API          APIConf           `yaml:"api"`
-	DailyReport  DailyReportConf   `yaml:"daily_report"`
-	PolicyDaemon PolicyDaemonConf  `yaml:"policy_daemon"`
+	ProxyCIDRs   []string         `yaml:"proxy_cidrs"`
+	Notification NotifyConf       `yaml:"notification"`
+	API          APIConf          `yaml:"api"`
+	DailyReport  DailyReportConf  `yaml:"daily_report"`
+	PolicyDaemon PolicyDaemonConf `yaml:"policy_daemon"`
 }
 
 // DailyReportConf configura el envío del resumen diario por email.
@@ -69,7 +69,7 @@ type LogPaths struct {
 type Rules struct {
 	AuthFailed struct {
 		MaxFailures int `yaml:"max_auth_failures"` // bloquear IP tras N fallos
-		ScanTime    int `yaml:"scan_time"`          // ventana en segundos
+		ScanTime    int `yaml:"scan_time"`         // ventana en segundos
 	} `yaml:"auth_failed"`
 
 	NumberMessages struct {
@@ -79,7 +79,7 @@ type Rules struct {
 
 	SaslConnections struct {
 		Max          int `yaml:"max_sasl_connections"` // conexiones totales por cuenta en ventana
-		MaxUniqueIPs int `yaml:"max_unique_ips"`        // IPs distintas por cuenta (0 = deshabilitado)
+		MaxUniqueIPs int `yaml:"max_unique_ips"`       // IPs distintas por cuenta (0 = deshabilitado)
 		ScanTime     int `yaml:"scan_time"`
 	} `yaml:"sasl_connections"`
 
@@ -96,7 +96,7 @@ type Rules struct {
 
 	QueueMonitor struct {
 		Threshold int `yaml:"queue_threshold"` // deferrals por dominio destino para alertar
-		ScanTime  int `yaml:"scan_time"`        // ventana en segundos
+		ScanTime  int `yaml:"scan_time"`       // ventana en segundos
 	} `yaml:"queue_monitor"`
 
 	DomainDiscovery struct {
@@ -111,7 +111,7 @@ type Rules struct {
 
 	RcptFlood struct {
 		MaxRecipients int `yaml:"max_recipients"` // destinatarios por IP en ventana para bloquear
-		ScanTime      int `yaml:"scan_time"`       // ventana en segundos
+		ScanTime      int `yaml:"scan_time"`      // ventana en segundos
 	} `yaml:"rcpt_flood"`
 
 	PasswordSpray struct {
@@ -120,8 +120,8 @@ type Rules struct {
 	} `yaml:"password_spray"`
 
 	AccountTakeover struct {
-		MinFailures  int `yaml:"min_failures"`   // fallos mínimos antes de vigilar la cuenta
-		CorrelWindow int `yaml:"correl_window"`  // ventana de correlación en segundos
+		MinFailures  int `yaml:"min_failures"`  // fallos mínimos antes de vigilar la cuenta
+		CorrelWindow int `yaml:"correl_window"` // ventana de correlación en segundos
 	} `yaml:"account_takeover"`
 }
 
@@ -166,14 +166,14 @@ type Whitelist struct {
 // NotifyConf agrupa los canales de notificación disponibles.
 // Cada canal es opcional; se activa solo si sus campos obligatorios están presentes.
 type NotifyConf struct {
-	Telegram        TelegramConf    `yaml:"telegram"`
-	Webhook         WebhookConf     `yaml:"webhook"`
-	Email           EmailConf       `yaml:"email"`
-	CooldownSeconds int             `yaml:"cooldown_seconds"` // cooldown por IP/cuenta (0 = deshabilitado)
-	MaxPerMinute    int             `yaml:"max_per_minute"`   // límite global por minuto (0 = deshabilitado)
+	Telegram        TelegramConf `yaml:"telegram"`
+	Webhook         WebhookConf  `yaml:"webhook"`
+	Email           EmailConf    `yaml:"email"`
+	CooldownSeconds int          `yaml:"cooldown_seconds"` // cooldown por IP/cuenta (0 = deshabilitado)
+	MaxPerMinute    int          `yaml:"max_per_minute"`   // límite global por minuto (0 = deshabilitado)
 	// OnActions filtra las notificaciones push (Telegram/email/webhook) por acción.
 	// Si está vacío se notifica todo. Valores activos: block_ip | suspend_account | rate_limit | notify_only
-	OnActions       []string        `yaml:"on_actions"`
+	OnActions []string `yaml:"on_actions"`
 }
 
 // EmailConf configura el notificador de email via sendmail local de Zimbra.
@@ -241,7 +241,7 @@ func Default() *Config {
 	cfg.DailyReport.Hour = 8
 
 	cfg.Notification.CooldownSeconds = 300 // 5 min entre notificaciones del mismo IP/cuenta
-	cfg.Notification.MaxPerMinute = 10    // máximo 10 notificaciones distintas por minuto
+	cfg.Notification.MaxPerMinute = 10     // máximo 10 notificaciones distintas por minuto
 
 	cfg.GeoIP.APIURL = "https://ipinfo.io"
 	cfg.GeoIP.CacheTTL = 24

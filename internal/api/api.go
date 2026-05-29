@@ -145,11 +145,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 type statusResponse struct {
-	Uptime             string               `json:"uptime"`
-	Version            string               `json:"version"`
-	BlockedIPs         []blockedIPJSON       `json:"blocked_ips"`
-	SuspendedAccounts  []suspendedAcctJSON   `json:"suspended_accounts"`
-	Stats              statsJSON             `json:"stats"`
+	Uptime            string              `json:"uptime"`
+	Version           string              `json:"version"`
+	BlockedIPs        []blockedIPJSON     `json:"blocked_ips"`
+	SuspendedAccounts []suspendedAcctJSON `json:"suspended_accounts"`
+	Stats             statsJSON           `json:"stats"`
 }
 
 type suspendedAcctJSON struct {
@@ -507,10 +507,10 @@ func isIPOrCIDR(s string) bool {
 // engineAdapter adapta *detection.Engine a la interfaz que espera Dependencies.
 type engineAdapter struct{ e *detection.Engine }
 
-func (a engineAdapter) EventsTotal() int64                   { return a.e.EventsTotal.Load() }
-func (a engineAdapter) AlertsTotal() int64                    { return a.e.AlertsTotal.Load() }
-func (a engineAdapter) DomainStats() []detection.DomainStat  { return a.e.DomainStats() }
-func (a engineAdapter) ModuleStats() []detection.ModuleStat  { return a.e.ModuleStats() }
+func (a engineAdapter) EventsTotal() int64                  { return a.e.EventsTotal.Load() }
+func (a engineAdapter) AlertsTotal() int64                  { return a.e.AlertsTotal.Load() }
+func (a engineAdapter) DomainStats() []detection.DomainStat { return a.e.DomainStats() }
+func (a engineAdapter) ModuleStats() []detection.ModuleStat { return a.e.ModuleStats() }
 
 // AdaptEngine envuelve un *detection.Engine para satisfacer la interfaz Engine de Dependencies.
 func AdaptEngine(e *detection.Engine) interface {

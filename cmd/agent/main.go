@@ -15,29 +15,29 @@ import (
 	"github.com/perulinux/sendguard/internal/audit"
 	"github.com/perulinux/sendguard/internal/config"
 	"github.com/perulinux/sendguard/internal/detection"
-	"github.com/perulinux/sendguard/internal/forwarder"
-	"github.com/perulinux/sendguard/internal/version"
+	"github.com/perulinux/sendguard/internal/detection/accounttakeover"
 	"github.com/perulinux/sendguard/internal/detection/authfailed"
 	"github.com/perulinux/sendguard/internal/detection/bouncerate"
 	"github.com/perulinux/sendguard/internal/detection/distbrute"
 	"github.com/perulinux/sendguard/internal/detection/domaindiscovery"
 	"github.com/perulinux/sendguard/internal/detection/impossibletraveler"
 	"github.com/perulinux/sendguard/internal/detection/numbermessages"
-	"github.com/perulinux/sendguard/internal/detection/queuemonitor"
-	"github.com/perulinux/sendguard/internal/detection/accounttakeover"
 	"github.com/perulinux/sendguard/internal/detection/passwordspray"
+	"github.com/perulinux/sendguard/internal/detection/queuemonitor"
 	"github.com/perulinux/sendguard/internal/detection/rcptflood"
 	"github.com/perulinux/sendguard/internal/detection/saslconnections"
 	"github.com/perulinux/sendguard/internal/enforcement"
 	"github.com/perulinux/sendguard/internal/event"
+	"github.com/perulinux/sendguard/internal/forwarder"
 	"github.com/perulinux/sendguard/internal/geoip"
 	"github.com/perulinux/sendguard/internal/notify"
 	"github.com/perulinux/sendguard/internal/notify/email"
-	"github.com/perulinux/sendguard/internal/report"
 	"github.com/perulinux/sendguard/internal/notify/telegram"
 	"github.com/perulinux/sendguard/internal/notify/webhook"
 	"github.com/perulinux/sendguard/internal/parser"
+	"github.com/perulinux/sendguard/internal/report"
 	"github.com/perulinux/sendguard/internal/store"
+	"github.com/perulinux/sendguard/internal/version"
 	"github.com/perulinux/sendguard/internal/watcher"
 )
 
@@ -90,6 +90,13 @@ func main() {
 		cfg.GeoIP.Token,
 		time.Duration(cfg.GeoIP.CacheTTL)*time.Hour,
 	)
+	defer geoResolver.Close()
+
+	// trusted_orgs solo funciona con el modo HTTP API (la DB local GeoLite2-Country
+	// no incluye datos de organización). Avisar si se configuró con DB local.
+	if len(cfg.Rules.ImpossibleTraveler.TrustedOrgs) > 0 && !geoResolver.OrgAvailable() {
+		slog.Warn("impossible_traveler: trusted_orgs configurado pero GeoIP usa DB local (sin datos de org); trusted_orgs será ignorado, usa trusted_cidrs en su lugar")
+	}
 
 	// Módulos de detección activos
 	authFailed := authfailed.New(authfailed.Config{
@@ -264,11 +271,11 @@ func main() {
 
 	// Enforcer: ejecuta las acciones de contención
 	enforcer := enforcement.New(enforcement.Config{
-		FirewallBackend: cfg.Firewall.Backend,
-		BanSeconds:      cfg.Firewall.BanSeconds,
-		ZmprovBin:       cfg.Zimbra.ZmprovBin,
-		PostfixSbin:     cfg.Zimbra.PostfixSbin,
-		PostfixConf:     cfg.Zimbra.PostfixConf,
+		FirewallBackend:  cfg.Firewall.Backend,
+		BanSeconds:       cfg.Firewall.BanSeconds,
+		ZmprovBin:        cfg.Zimbra.ZmprovBin,
+		PostfixSbin:      cfg.Zimbra.PostfixSbin,
+		PostfixConf:      cfg.Zimbra.PostfixConf,
 		Notifier:         finalNotifier,
 		AbuseIPDB:        abuseClient,
 		AuditLog:         auditLog,
