@@ -109,6 +109,9 @@ func buildPlain(alert detection.Alert, ts time.Time) string {
 	if alert.IP != "" {
 		fmt.Fprintf(&sb, "IP          : %s\n", alert.IP)
 	}
+	if alert.Country != "" {
+		fmt.Fprintf(&sb, "País        : %s\n", alert.Country)
+	}
 	if alert.Account != "" {
 		fmt.Fprintf(&sb, "Cuenta      : %s\n", alert.Account)
 	}
@@ -148,6 +151,7 @@ func buildHTML(alert detection.Alert, ts time.Time) string {
 	addRow("Módulo", alert.Module)
 	addRow("Servidor", alert.Server)
 	addRow("Dirección IP", alert.IP)
+	addRow("País", alert.Country)
 	addRow("Cuenta", alert.Account)
 	addRow("Dominio", alert.Domain)
 

@@ -276,6 +276,14 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 		}
 	}
 
+	// Enriquecer la notificación con el país de origen de la IP para dejar
+	// constancia completa. El path de bloqueo lo resuelve vía AbuseIPDB sobre una
+	// copia local, pero las suspensiones de cuenta no pasan por ahí; garantizamos
+	// el dato aquí para cualquier alerta que efectivamente se notifique.
+	if alert.IP != "" && alert.Country == "" && e.cfg.GeoResolver != nil {
+		alert.Country = e.cfg.GeoResolver.Country(alert.IP)
+	}
+
 	if err := e.cfg.Notifier.Notify(ctx, alert); err != nil {
 		slog.Warn("enforcement: error al notificar", "error", err, "module", alert.Module)
 	}

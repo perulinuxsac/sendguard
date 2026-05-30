@@ -156,6 +156,9 @@ func formatAlert(alert detection.Alert) string {
 	if alert.IP != "" {
 		fmt.Fprintf(&sb, "🌐 IP: <code>%s</code>\n", alert.IP)
 	}
+	if alert.Country != "" {
+		fmt.Fprintf(&sb, "🏳 País: <code>%s</code>\n", alert.Country)
+	}
 	if alert.Account != "" {
 		fmt.Fprintf(&sb, "👤 Cuenta: <code>%s</code>\n", alert.Account)
 	}
@@ -172,7 +175,7 @@ func formatAlert(alert detection.Alert) string {
 	if ts.IsZero() {
 		ts = time.Now()
 	}
-	fmt.Fprintf(&sb, "\n\n🕐 %s", ts.Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(&sb, "\n\n🕐 %s", ts.Format("2006-01-02 15:04:05 -07:00"))
 
 	return sb.String()
 }

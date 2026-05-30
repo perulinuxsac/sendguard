@@ -254,6 +254,7 @@ func Default() *Config {
 		"40.92.0.0/15",    // Microsoft Exchange
 		"40.107.0.0/16",   // Microsoft Exchange
 		"66.102.0.0/20",   // Google Mail
+		"74.125.0.0/16",   // Google Mail (fetcher / Gmailify)
 		"209.85.128.0/17", // Google SMTP
 		"17.0.0.0/8",      // Apple (iCloud Mail)
 	}

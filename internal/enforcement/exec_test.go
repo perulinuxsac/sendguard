@@ -117,7 +117,11 @@ func TestSuspendAccount(t *testing.T) {
 	binDir := setupFakeBin(t, "zmprov")
 	prependPath(t, binDir)
 
-	e := New(Config{})
+	// ZmprovBin explícito: suspendAccount usa por defecto la ruta absoluta
+	// /opt/zimbra/bin/zmprov (correcto en producción, donde el PATH del servicio
+	// no incluye /opt/zimbra/bin), por lo que el fake del PATH no se usaría.
+	// Apuntar al fake hace el test determinista e independiente del entorno.
+	e := New(Config{ZmprovBin: filepath.Join(binDir, "zmprov")})
 	e.suspendAccount(context.Background(), detection.Alert{
 		Account: "user@domain.com",
 		Module:  "numbermessages",
