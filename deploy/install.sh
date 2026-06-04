@@ -202,6 +202,8 @@ if [[ -f "$CONFIG_FILE" ]]; then
     DEF_EMAIL_TO=$(cfg_get_list "to")
     DEF_ABUSEIPDB=$(cfg_get_under "abuseipdb" "api_key")
     DEF_ON_ACTIONS=$(cfg_get_list "on_actions")
+    DEF_MM_ACCOUNT=$(cfg_get_under "geoip" "maxmind_account_id")
+    DEF_MM_LICENSE=$(cfg_get_under "geoip" "maxmind_license_key")
 else
     DEF_SERVER_ID="$(hostname -s)-mail1"
     DEF_CLIENT_NAME=""
@@ -212,6 +214,7 @@ else
     DEF_EMAIL_FROM="" DEF_EMAIL_TO=""
     DEF_ABUSEIPDB=""
     DEF_ON_ACTIONS="suspend_account"
+    DEF_MM_ACCOUNT="" DEF_MM_LICENSE=""
 fi
 
 # ── Configuración interactiva ─────────────────────────────────────────────────
@@ -262,9 +265,9 @@ echo ""
 info "GeoIP local MaxMind (recomendado para producción, evita rate-limits)"
 info "Registro gratuito en: https://www.maxmind.com/en/geolite2/signup"
 info "Account ID y License Key se encuentran en: maxmind.com → My Account → Manage License Keys"
-ask "Account ID de MaxMind (número, vacío = usar HTTP API)"  ""  MM_ACCOUNT_ID
+ask "Account ID de MaxMind (número, vacío = usar HTTP API)"  "$DEF_MM_ACCOUNT"  MM_ACCOUNT_ID
 MM_LICENSE_KEY=""
-[[ -n "$MM_ACCOUNT_ID" ]] && ask "License Key de MaxMind"  ""  MM_LICENSE_KEY
+[[ -n "$MM_ACCOUNT_ID" ]] && ask "License Key de MaxMind"  "$DEF_MM_LICENSE"  MM_LICENSE_KEY
 
 # ── Generar YAML ──────────────────────────────────────────────────────────────
 section "── Generando configuración"
@@ -371,8 +374,9 @@ if [[ -n "$MM_ACCOUNT_ID" && -n "$MM_LICENSE_KEY" ]]; then
     fi
 
     # Cron semanal de actualización (jueves 3am, MaxMind actualiza martes/viernes)
+    # Lee credenciales desde el config para no embeberlas en crontab.
     if [[ -n "$MMDB_PATH" ]]; then
-        CRON_CMD="curl -fsSL -L -u '${MM_ACCOUNT_ID}:${MM_LICENSE_KEY}' '${MMDB_URL}' -o '${MMDB_TAR}' && tar -xzf '${MMDB_TAR}' --wildcards --strip-components=1 -C '${DB_DIR}' '*.mmdb' && rm -f '${MMDB_TAR}' && systemctl reload-or-restart sendguard-agent"
+        CRON_CMD="MM_ID=\$(grep 'maxmind_account_id' /etc/sendguard/agent.yaml | sed 's/.*: \"\\(.*\\)\"/\\1/'); MM_KEY=\$(grep 'maxmind_license_key' /etc/sendguard/agent.yaml | sed 's/.*: \"\\(.*\\)\"/\\1/'); curl -fsSL -L -u \"\$MM_ID:\$MM_KEY\" '${MMDB_URL}' -o '${MMDB_TAR}' && tar -xzf '${MMDB_TAR}' --wildcards --strip-components=1 -C '${DB_DIR}' '*.mmdb' && rm -f '${MMDB_TAR}' && systemctl reload-or-restart sendguard-agent"
         (crontab -l 2>/dev/null | grep -v 'GeoLite2-Country'; echo "0 3 * * 4 $CRON_CMD # SendGuard GeoIP update") | crontab -
         ok "Cron de actualización GeoIP instalado (jueves 3am)"
     fi
@@ -448,6 +452,8 @@ rules:
 
 geoip:
 ${GEOIP_DB_LINE}
+  maxmind_account_id: "${MM_ACCOUNT_ID}"
+  maxmind_license_key: "${MM_LICENSE_KEY}"
   api_url: "https://ipinfo.io"
   cache_ttl: 24
   allowed_countries:${COUNTRIES_YAML}

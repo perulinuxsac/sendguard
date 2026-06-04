@@ -130,6 +130,8 @@ type GeoIPConf struct {
 	// Si está configurado, se usa la DB local (sin red, sin rate-limit).
 	// Si está vacío, se cae al HTTP API definido en APIURL.
 	DBPath           string   `yaml:"db_path"`
+	MaxMindAccount   string   `yaml:"maxmind_account_id"`  // Account ID para descargar/actualizar GeoLite2
+	MaxMindLicense   string   `yaml:"maxmind_license_key"` // License Key para descargar/actualizar GeoLite2
 	APIURL           string   `yaml:"api_url"`
 	Token            string   `yaml:"token"`     // opcional: Bearer token para ipinfo.io
 	CacheTTL         int      `yaml:"cache_ttl"` // horas (aplica solo al modo HTTP API)
