@@ -416,15 +416,7 @@ rules:
     scan_time: 300
   impossible_traveler:
     window_minutes: 30
-    # trusted_orgs: detección por nombre de organización via ipinfo.io (recomendado).
-    # Cubre TODAS las IPs de cada proveedor sin importar cuántas tengan.
-    trusted_orgs:
-      - "MICROSOFT"   # Outlook Mobile, Exchange Online, Azure
-      - "GOOGLE"      # Gmail Mobile, Google Workspace
-      - "APPLE"       # iCloud Mail, Apple Mail Mobile
-      - "AMAZON"      # AWS SES, WorkMail
-    # trusted_cidrs: red de seguridad para modo DB local (sin llamadas a ipinfo.io).
-    # Solo los rangos principales de Exchange Online para IMAP/SMTP proxy.
+    # trusted_cidrs: rangos de proxies cloud conocidos (DB local MaxMind no tiene datos de org).
     trusted_cidrs:
       - "52.96.0.0/14"    # Exchange Online
       - "52.100.0.0/14"   # Exchange Online
