@@ -142,8 +142,8 @@ func parseUFWStatus(out []byte) []string {
 		if !strings.Contains(line, "DENY IN") {
 			continue
 		}
-		// Línea: "Anywhere   DENY IN   1.2.3.4"
-		// Tomar el último campo que sea una IPv4 válida.
+		// Formato: "Anywhere   DENY IN   1.2.3.4"
+		// La IP de origen es el primer campo que pase isValidIP (siempre al final).
 		fields := strings.Fields(line)
 		for _, f := range fields {
 			if isValidIP(f) {

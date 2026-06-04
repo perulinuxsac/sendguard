@@ -343,14 +343,30 @@ if [[ -n "$MM_ACCOUNT_ID" && -n "$MM_LICENSE_KEY" ]]; then
     MMDB_TAR="$DB_DIR/GeoLite2-Country.tar.gz"
     MMDB_PATH="$DB_DIR/GeoLite2-Country.mmdb"
     info "Descargando GeoLite2-Country.mmdb..."
-    if curl -fsSL -L -u "${MM_ACCOUNT_ID}:${MM_LICENSE_KEY}" "$MMDB_URL" -o "$MMDB_TAR" 2>/dev/null; then
+    _sg_curl_err=$(mktemp)
+    HTTP_CODE=$(curl -sSL -o "$MMDB_TAR" -w "%{http_code}" \
+        -u "${MM_ACCOUNT_ID}:${MM_LICENSE_KEY}" "$MMDB_URL" 2>"$_sg_curl_err")
+    _sg_curl_exit=$?
+    _sg_curl_msg=$(cat "$_sg_curl_err"); rm -f "$_sg_curl_err"
+
+    if [[ "$HTTP_CODE" == "200" && $_sg_curl_exit -eq 0 ]]; then
         tar -xzf "$MMDB_TAR" --wildcards --strip-components=1 -C "$DB_DIR" '*.mmdb' 2>/dev/null \
             && rm -f "$MMDB_TAR" \
             && ok "GeoLite2-Country.mmdb instalado en $MMDB_PATH" \
             && GEOIP_DB_LINE="  db_path: \"$MMDB_PATH\"" \
             || { warn "Error extrayendo mmdb — se usará HTTP API"; MMDB_PATH=""; }
+    elif [[ "$HTTP_CODE" == "401" ]]; then
+        warn "Credenciales MaxMind inválidas (HTTP 401)"
+        warn "Verifica Account ID y License Key en: maxmind.com → My Account → Manage License Keys"
+        warn "Se usará HTTP API (ipinfo.io) como fallback"
+        MMDB_PATH=""
+    elif [[ $_sg_curl_exit -ne 0 ]]; then
+        warn "Sin acceso a internet o error de red al descargar GeoLite2 (exit $_sg_curl_exit)"
+        [[ -n "$_sg_curl_msg" ]] && warn "Detalle: $_sg_curl_msg"
+        warn "Se usará HTTP API (ipinfo.io) como fallback"
+        MMDB_PATH=""
     else
-        warn "No se pudo descargar la DB (credenciales inválidas o sin acceso a internet) — se usará HTTP API"
+        warn "Error HTTP $HTTP_CODE al descargar GeoLite2 — se usará HTTP API"
         MMDB_PATH=""
     fi
 
