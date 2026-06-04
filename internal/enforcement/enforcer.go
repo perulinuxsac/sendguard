@@ -260,6 +260,12 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 		e.cfg.AuditLog.Log(ctx, alert)
 	}
 
+	// IPs de países permitidos: la contención ya fue omitida en blockIP/suspendAccount.
+	// Omitir también la notificación push para no generar ruido por IPs legítimas.
+	if e.isIPFromAllowedCountry(alert.IP) {
+		return
+	}
+
 	// Filtro de notificaciones push: si NotifyOnActions está configurado, solo
 	// se envían notificaciones para las acciones incluidas en la lista.
 	// Forwarder y AuditLog siempre registran todo (sin filtro).

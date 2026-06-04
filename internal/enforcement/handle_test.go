@@ -3,13 +3,28 @@ package enforcement
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/perulinux/sendguard/internal/audit"
 	"github.com/perulinux/sendguard/internal/detection"
+	"github.com/perulinux/sendguard/internal/geoip"
 	"github.com/perulinux/sendguard/internal/store"
 )
+
+// newGeoSrv crea un Resolver GeoIP apuntando a un servidor HTTP de test
+// que siempre responde con el código de país dado.
+func newGeoSrv(t *testing.T, country string) *geoip.Resolver {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"country":%q}`, country)
+	}))
+	t.Cleanup(srv.Close)
+	return geoip.New("", srv.URL, "", time.Hour)
+}
 
 // captureNotifier registra las alertas recibidas para verificación en tests.
 type captureNotifier struct {
@@ -130,6 +145,52 @@ func TestHandlePurgeQueueSinPostfix(t *testing.T) {
 	e.handle(context.Background(), detection.Alert{
 		Module: "test", Action: detection.ActionPurgeQueue, Domain: "example.com",
 	})
+}
+
+// ── handle — país permitido omite notificación ───────────────────────────────
+
+func TestHandleAllowedCountryOmiteNotificacion(t *testing.T) {
+	srv := newGeoSrv(t, "PE")
+	n := &captureNotifier{}
+	e := New(Config{
+		Notifier:         n,
+		GeoResolver:      srv,
+		AllowedCountries: []string{"PE"},
+	})
+
+	for _, action := range []detection.Action{
+		detection.ActionBlockIP,
+		detection.ActionSuspendAcct,
+		detection.ActionNotifyOnly,
+	} {
+		e.handle(context.Background(), detection.Alert{
+			IP: "1.2.3.4", Account: "u@x.com", Module: "test",
+			Action: action, Timestamp: time.Now(),
+		})
+	}
+
+	if len(n.alerts) != 0 {
+		t.Errorf("país permitido: no deben enviarse notificaciones, got %d", len(n.alerts))
+	}
+}
+
+func TestHandleNoAllowedCountryNotifica(t *testing.T) {
+	srv := newGeoSrv(t, "CN")
+	n := &captureNotifier{}
+	e := New(Config{
+		Notifier:         n,
+		GeoResolver:      srv,
+		AllowedCountries: []string{"PE"},
+	})
+
+	e.handle(context.Background(), detection.Alert{
+		IP: "1.2.3.4", Module: "test",
+		Action: detection.ActionNotifyOnly, Timestamp: time.Now(),
+	})
+
+	if len(n.alerts) != 1 {
+		t.Errorf("país no permitido: debe notificarse, got %d alerts", len(n.alerts))
+	}
 }
 
 // ── Block / Unblock ──────────────────────────────────────────────────────────
