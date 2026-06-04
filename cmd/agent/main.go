@@ -304,15 +304,18 @@ func main() {
 		slog.Info("report: resumen diario activado", "hour_utc", cfg.DailyReport.Hour)
 	}
 
-	// Watchers: leen los logs y parsean eventos hacia el mismo canal
-	p := parser.New()
+	// Watchers: leen los logs y parsean eventos hacia el mismo canal.
+	// Cada watcher corre en su propia goroutine y recibe su propio Parser: ParseLine
+	// es stateful (mapas de queue IDs) y no es thread-safe, así que no se comparte
+	// una sola instancia entre goroutines. mailbox.log no usa ese estado, pero darle
+	// su propio parser mantiene la invariante simple y evita un data race futuro.
 
 	// mail.log — SMTP/SASL (obligatorio)
-	go watcher.New(cfg.Zimbra.Logs.Main, p.ParseLine, cfg.ServerID, eventCh).Run(ctx)
+	go watcher.New(cfg.Zimbra.Logs.Main, parser.New().ParseLine, cfg.ServerID, eventCh).Run(ctx)
 
 	// mailbox.log — IMAP/POP3/SOAP (opcional; si está vacío en config, no se inicia)
 	if cfg.Zimbra.Logs.Mailbox != "" {
-		go watcher.New(cfg.Zimbra.Logs.Mailbox, p.ParseMailboxLine, cfg.ServerID, eventCh).Run(ctx)
+		go watcher.New(cfg.Zimbra.Logs.Mailbox, parser.New().ParseMailboxLine, cfg.ServerID, eventCh).Run(ctx)
 		slog.Info("watcher mailbox iniciado", "path", cfg.Zimbra.Logs.Mailbox)
 	}
 

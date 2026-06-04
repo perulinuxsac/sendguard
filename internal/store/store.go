@@ -232,6 +232,26 @@ func (s *Store) MarkSynced(ids []int64) error {
 	return tx.Commit()
 }
 
+// PruneOldEvents elimina eventos más antiguos que maxAge sin importar su estado
+// de sincronización. Se usa en modo standalone (sin Controller), donde los eventos
+// nunca se marcan como synced=1 y de otro modo crecerían indefinidamente.
+// maxAge=0 elimina todos los eventos pendientes.
+func (s *Store) PruneOldEvents(maxAge time.Duration) (int64, error) {
+	var res sql.Result
+	var err error
+	if maxAge == 0 {
+		res, err = s.db.Exec(`DELETE FROM pending_events`)
+	} else {
+		cutoff := time.Now().Add(-maxAge).Unix()
+		res, err = s.db.Exec(`DELETE FROM pending_events WHERE created_at <= ?`, cutoff)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: PruneOldEvents: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // PruneSyncedEvents elimina eventos ya sincronizados más antiguos que maxAge.
 // Evita que la tabla crezca indefinidamente en modo offline.
 // maxAge=0 elimina todos los eventos sincronizados sin importar su antigüedad.

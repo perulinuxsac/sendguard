@@ -82,7 +82,18 @@ type Module struct {
 	geoip       CountryLookup
 	lastLogins  map[string]loginRecord // account → último login
 	trustedNets []*net.IPNet           // rangos de proxies conocidos (parseados al inicio)
+	callCount   int
 }
+
+// pruneEvery controla cada cuántos logins se purgan cuentas inactivas.
+const pruneEvery = 5_000
+
+// staleAfter es la antigüedad tras la cual el último login de una cuenta se
+// descarta del mapa. Es muy superior a cualquier WindowMinutes razonable: la
+// detección de viaje imposible opera a escala de minutos, así que purgar entradas
+// de hace más de un día no afecta a la lógica de ventana ni al mecanismo de
+// supresión (que retrocede el timestamp una ventana completa), solo acota memoria.
+const staleAfter = 24 * time.Hour
 
 // New crea un módulo ImpossibleTraveler con la configuración y resolver GeoIP dados.
 func New(cfg Config, geoip CountryLookup) *Module {
@@ -146,6 +157,13 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 	// Ignorar proxies conocidos (CIDR o nombre de organización) — no actualizar ubicación ni comparar.
 	if m.isTrustedProxy(ev.IP) || m.isTrustedOrg(ev.IP) {
 		return nil
+	}
+
+	// Purga lazy: descartar cuentas inactivas para acotar el mapa lastLogins.
+	m.callCount++
+	if m.callCount >= pruneEvery {
+		m.callCount = 0
+		m.pruneStale(ev.Timestamp)
 	}
 
 	country := m.geoip.Country(ev.IP)
@@ -225,4 +243,16 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 		Country:   country,
 		Reasons:   []string{reason},
 	}}
+}
+
+// pruneStale elimina del mapa las cuentas cuyo último login es más antiguo que
+// staleAfter, para acotar el uso de memoria sin afectar la detección (que opera
+// a escala de minutos).
+func (m *Module) pruneStale(now time.Time) {
+	cutoff := now.Add(-staleAfter)
+	for account, rec := range m.lastLogins {
+		if rec.timestamp.Before(cutoff) {
+			delete(m.lastLogins, account)
+		}
+	}
 }

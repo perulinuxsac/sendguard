@@ -115,6 +115,24 @@ func (c *checker) queryAgent(ip string) bool {
 	return body.Blocked
 }
 
+// agentBaseURL deriva la URL base de la API del agente desde api.listen.
+// El agente es local, así que un host comodín o ausente ("", ":9099", "0.0.0.0:9099",
+// "[::]:9099") se normaliza a 127.0.0.1, que sí es alcanzable por HTTP.
+func agentBaseURL(listen string) string {
+	const fallback = "http://127.0.0.1:9099"
+	if listen == "" {
+		return fallback
+	}
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil || port == "" {
+		return fallback
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
 // handleConn atiende una conexión del smtpd de Postfix.
 // El protocolo es: pares clave=valor terminados por línea vacía → responde action=...\n\n
 func handleConn(ctx context.Context, conn net.Conn, chk *checker, wg *sync.WaitGroup) {
@@ -193,10 +211,7 @@ func main() {
 		addr = defaultListen
 	}
 
-	agentBase := "http://127.0.0.1:9099"
-	if cfg.API.Listen != "" {
-		agentBase = "http://" + cfg.API.Listen
-	}
+	agentBase := agentBaseURL(cfg.API.Listen)
 
 	chk := newChecker(agentBase)
 

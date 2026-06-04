@@ -296,3 +296,49 @@ func TestPruneSyncedEvents(t *testing.T) {
 		t.Errorf("evento no sincronizado: esperado 1, got %d", len(pending))
 	}
 }
+
+// TestPruneOldEvents verifica que PruneOldEvents borra eventos por antigüedad sin
+// importar su estado synced — el camino que evita el crecimiento ilimitado de
+// pending_events en modo standalone (sin Controller, los eventos nunca se sincronizan).
+func TestPruneOldEvents(t *testing.T) {
+	s := openMemory(t)
+
+	// 3 eventos no sincronizados (synced=0), como ocurre en modo standalone.
+	for i := 0; i < 3; i++ {
+		s.SaveEvent(event.Event{Type: event.AuthFailed, Timestamp: time.Now()})
+	}
+
+	// maxAge=0 elimina todos los eventos pendientes pese a estar sin sincronizar.
+	n, err := s.PruneOldEvents(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Errorf("PruneOldEvents(0): esperado 3, got %d", n)
+	}
+
+	pending, _ := s.LoadUnsynced(100)
+	if len(pending) != 0 {
+		t.Errorf("tras prune: esperado 0 pendientes, got %d", len(pending))
+	}
+}
+
+// TestPruneOldEventsRespetaMaxAge verifica que con maxAge grande no se borra nada
+// reciente, y que los eventos no sincronizados se mantienen accesibles.
+func TestPruneOldEventsRespetaMaxAge(t *testing.T) {
+	s := openMemory(t)
+	for i := 0; i < 2; i++ {
+		s.SaveEvent(event.Event{Type: event.AuthFailed, Timestamp: time.Now()})
+	}
+
+	n, err := s.PruneOldEvents(time.Hour) // creados "ahora" → nada que borrar
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("PruneOldEvents(1h): esperado 0, got %d", n)
+	}
+	if pending, _ := s.LoadUnsynced(100); len(pending) != 2 {
+		t.Errorf("eventos recientes: esperado 2, got %d", len(pending))
+	}
+}

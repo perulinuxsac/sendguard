@@ -108,11 +108,26 @@ func extractQueueIDs(data []byte, domain string) []string {
 //	    "reject_unauthenticated_sender_login_mismatch"
 func rateLimit(ctx context.Context, account string, banSeconds int, sbinDir, confDir string) error {
 	accessFile := filepath.Join(confDir, "sendguard_access")
+	prefix := account + " "
 	entry := account + " REJECT SendGuard: limite de envio excedido\n"
 
 	// Serializar contra removeRateLimit para evitar que una expiración concurrente
 	// lea el archivo antes de que este append y la regeneración del mapa queden fijos.
 	accessFileMu.Lock()
+
+	// Idempotencia: si la cuenta ya tiene una entrada, no añadir una línea duplicada.
+	// Sin esto, alertas repetidas acumulan líneas REJECT idénticas y la primera
+	// expiración (removeRateLimit borra por prefijo) levantaría el límite de todas.
+	if existing, err := os.ReadFile(accessFile); err == nil && hasAccountEntry(existing, prefix) {
+		accessFileMu.Unlock()
+		if banSeconds > 0 {
+			time.AfterFunc(time.Duration(banSeconds)*time.Second, func() {
+				removeRateLimit(account, sbinDir, confDir)
+			})
+		}
+		return nil
+	}
+
 	f, err := os.OpenFile(accessFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		accessFileMu.Unlock()
@@ -205,6 +220,18 @@ func parseQueueFull(data []byte) []QueueEntry {
 		entries = append(entries, *current)
 	}
 	return entries
+}
+
+// hasAccountEntry indica si el access file ya contiene una línea para la cuenta
+// (identificada por su prefijo "account ").
+func hasAccountEntry(data []byte, prefix string) bool {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		if strings.HasPrefix(scanner.Text(), prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // removeRateLimit elimina la línea del account del access file y regenera el mapa.

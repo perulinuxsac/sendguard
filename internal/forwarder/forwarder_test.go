@@ -274,6 +274,42 @@ func TestSyncBatchURLInvalida(t *testing.T) {
 	}
 }
 
+// TestPruneStandaloneBorraNoSincronizados verifica el fix del crecimiento
+// ilimitado: en modo standalone (sin Controller) la poda elimina eventos aunque
+// nunca se hayan marcado como sincronizados. Se usa una retención negativa para
+// que todos los eventos cuenten como "antiguos" de forma determinista.
+func TestPruneStandaloneBorraNoSincronizados(t *testing.T) {
+	s := openMemoryStore(t)
+	f := New(Config{
+		Store:               s,            // ControllerURL vacío → modo standalone
+		StandaloneRetention: -time.Second, // cutoff en el futuro → todo es "antiguo"
+	})
+
+	f.SaveAlert(sampleAlert())
+	f.SaveAlert(sampleAlert())
+
+	f.prune()
+
+	if events, _ := s.LoadUnsynced(10); len(events) != 0 {
+		t.Errorf("standalone prune: esperado 0 pendientes, got %d", len(events))
+	}
+}
+
+// TestPruneConectadoConservaNoSincronizados verifica que en modo conectado la poda
+// solo afecta a los ya sincronizados — los pendientes de envío se conservan.
+func TestPruneConectadoConservaNoSincronizados(t *testing.T) {
+	s := openMemoryStore(t)
+	f := New(Config{Store: s, ControllerURL: "http://example.com"})
+
+	f.SaveAlert(sampleAlert())
+
+	f.prune() // PruneSyncedEvents(24h): no toca synced=0
+
+	if events, _ := s.LoadUnsynced(10); len(events) != 1 {
+		t.Errorf("conectado prune: esperado 1 pendiente, got %d", len(events))
+	}
+}
+
 func TestRunPruneTicker(t *testing.T) {
 	s := openMemoryStore(t)
 	f := New(Config{

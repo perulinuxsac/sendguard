@@ -29,8 +29,16 @@ type Config struct {
 	APIKey        string        // Bearer token para el Controller
 	SyncInterval  time.Duration // 0 = 30s
 	BatchSize     int           // 0 = 100
-	pruneInterval time.Duration // 0 = time.Hour; override in tests
+	// StandaloneRetention: en modo standalone (ControllerURL vacío) los eventos
+	// nunca se marcan como sincronizados, así que se podan por antigüedad para
+	// evitar el crecimiento ilimitado de pending_events. 0 = 7 días.
+	StandaloneRetention time.Duration
+	pruneInterval       time.Duration // 0 = time.Hour; override in tests
 }
+
+// defaultStandaloneRetention es la antigüedad máxima de un evento persistido
+// cuando no hay Controller configurado.
+const defaultStandaloneRetention = 7 * 24 * time.Hour
 
 // Forwarder persiste alertas en SQLite local y las reenvía al Controller
 // cuando hay conectividad. Es thread-safe.
@@ -46,6 +54,9 @@ func New(cfg Config) *Forwarder {
 	}
 	if cfg.BatchSize == 0 {
 		cfg.BatchSize = 100
+	}
+	if cfg.StandaloneRetention == 0 {
+		cfg.StandaloneRetention = defaultStandaloneRetention
 	}
 	return &Forwarder{
 		cfg:        cfg,
@@ -134,13 +145,27 @@ func (f *Forwarder) Run(ctx context.Context) {
 				f.syncBatch(ctx)
 			}
 		case <-pruneTicker.C:
-			n, err := f.cfg.Store.PruneSyncedEvents(24 * time.Hour)
-			if err != nil {
-				slog.Warn("forwarder: error al podar eventos sincronizados", "error", err)
-			} else if n > 0 {
-				slog.Info("forwarder: eventos sincronizados podados", "count", n)
-			}
+			f.prune()
 		}
+	}
+}
+
+// prune elimina eventos antiguos de pending_events para acotar el tamaño de la DB.
+//   - Modo conectado: solo los ya sincronizados (synced=1) más antiguos que 24h.
+//   - Modo standalone: todos los más antiguos que StandaloneRetention, ya que sin
+//     Controller nunca se marcan como sincronizados y de otro modo crecerían sin límite.
+func (f *Forwarder) prune() {
+	var n int64
+	var err error
+	if f.cfg.ControllerURL == "" {
+		n, err = f.cfg.Store.PruneOldEvents(f.cfg.StandaloneRetention)
+	} else {
+		n, err = f.cfg.Store.PruneSyncedEvents(24 * time.Hour)
+	}
+	if err != nil {
+		slog.Warn("forwarder: error al podar eventos", "error", err)
+	} else if n > 0 {
+		slog.Info("forwarder: eventos podados", "count", n, "standalone", f.cfg.ControllerURL == "")
 	}
 }
 

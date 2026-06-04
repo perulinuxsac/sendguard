@@ -301,6 +301,19 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		return
 	}
 
+	// País permitido: no se bloquea en el firewall, no se persiste en SQLite y NO
+	// se registra en el mapa de bloqueados — de lo contrario IsBlocked() devolvería
+	// true y el policy daemon rechazaría las conexiones SMTP de esta IP pese a que
+	// el bloqueo se omitió deliberadamente. La notificación sigue su curso desde
+	// handle(). Los módulos vacían su ventana al alertar, así que el re-logueo de
+	// esta línea queda acotado a un ciclo de umbral por IP, no por evento.
+	if e.isIPFromAllowedCountry(alert.IP) {
+		country := e.cfg.GeoResolver.Country(alert.IP)
+		slog.Info("enforcement: IP de país permitido, bloqueo de firewall omitido",
+			"ip", alert.IP, "country", country, "module", alert.Module)
+		return
+	}
+
 	e.mu.Lock()
 	if entry, exists := e.blockedIPs[alert.IP]; exists && time.Now().Before(entry.expiry) {
 		e.mu.Unlock()
@@ -315,16 +328,6 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 	}
 	e.blockedIPs[alert.IP] = blockedIP{expiry: expiry, module: alert.Module}
 	e.mu.Unlock()
-
-	// País permitido: la IP se registra en memoria para deduplicación, pero no se
-	// bloquea en el firewall ni se persiste en SQLite (el ban no sobrevive reinicios).
-	// La notificación sigue enviándose desde handle() para informar al administrador.
-	if e.isIPFromAllowedCountry(alert.IP) {
-		country := e.cfg.GeoResolver.Country(alert.IP)
-		slog.Info("enforcement: IP de país permitido, bloqueo de firewall omitido",
-			"ip", alert.IP, "country", country, "module", alert.Module)
-		return
-	}
 
 	// Persistir antes de ejecutar el comando para no perder el registro
 	// si el proceso se reinicia inmediatamente después del ban.
