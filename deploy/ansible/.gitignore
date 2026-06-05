@@ -1,0 +1,12 @@
+# Inventarios y variables reales (pueden contener secretos / IPs de clientes)
+inventory.ini
+group_vars/all.yml
+group_vars/*.yml
+host_vars/*.yml
+
+# Conservar los ejemplos en el repo
+!group_vars/all.example.yml
+!host_vars/*.example.yml
+
+# Artefactos / retry
+*.retry

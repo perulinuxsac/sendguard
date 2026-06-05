@@ -1,0 +1,23 @@
+[Unit]
+Description=SendGuard Agent — protección SMTP/IMAP para Zimbra
+Documentation=https://github.com/perulinux/sendguard
+After=network.target zimbra.service
+Wants=zimbra.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/sendguard-agent -config /etc/sendguard/agent.yaml
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sendguard-agent
+
+# NoNewPrivileges no requiere namespaces y es seguro en todos los entornos.
+# ProtectSystem/ProtectHome/PrivateTmp se omiten: fallan con 226/NAMESPACE
+# en kernels con namespaces restringidos (OpenVZ, Virtuozzo, algunos KVM).
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

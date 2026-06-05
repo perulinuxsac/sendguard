@@ -1,0 +1,37 @@
+# ── Variables COMPARTIDAS por toda la flota ──────────────────────────────────
+# Copia a group_vars/all.yml y CÍFRALO con ansible-vault:
+#     ansible-vault encrypt group_vars/all.yml
+# o deja en claro lo no sensible y mueve solo los secretos a un vault aparte.
+
+# Cliente / identidad — si TODOS son del mismo cliente, ponlo aquí; si varía por
+# servidor, déjalo en host_vars/<host>.yml.
+sendguard_client_name: "PERULINUX"
+
+# Países permitidos (iguales en toda la flota)
+sendguard_allowed_countries:
+  - "PE"
+  - "US"
+
+# ── Secretos compartidos (CIFRAR con ansible-vault) ──────────────────────────
+sendguard_telegram_token: "123456:CAMBIA_ESTE_TOKEN"
+sendguard_telegram_chat_id: "8480654669"
+
+sendguard_abuseipdb_key: "CAMBIA_ESTA_API_KEY"
+
+sendguard_maxmind_account_id: "1234567"
+sendguard_maxmind_license_key: "CAMBIA_ESTA_LICENSE_KEY"
+
+# Notificaciones por correo (sendmail de Zimbra). Si el destinatario varía por
+# cliente, mueve sendguard_email_to a host_vars.
+sendguard_email_from: "ti@perucloud.pe"
+sendguard_email_to:
+  - "soc@perulinux.pe"
+
+# Filtrar notificaciones push por acción (vacío = todo).
+# sendguard_notify_on_actions:
+#   - "block_ip"
+#   - "suspend_account"
+
+# Controller central (vacío = standalone).
+# sendguard_controller_url: "https://controller.perulinux.pe"
+# sendguard_controller_api_key: "..."

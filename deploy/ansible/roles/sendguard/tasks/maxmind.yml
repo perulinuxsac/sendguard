@@ -1,0 +1,62 @@
+---
+# ── GeoIP local MaxMind (GeoLite2-Country) ───────────────────────────────────
+# Se ejecuta solo si hay credenciales. Descarga la DB si falta y deja un cron
+# semanal que la actualiza leyendo las credenciales desde el propio agent.yaml
+# (no se embeben en crontab).
+
+- name: Comprobar si la DB MaxMind ya existe
+  ansible.builtin.stat:
+    path: "{{ sendguard_db_dir }}/GeoLite2-Country.mmdb"
+  register: sg_mmdb_stat
+
+- name: Descargar y extraer GeoLite2-Country (si falta)
+  when: not sg_mmdb_stat.stat.exists
+  block:
+    - name: Descargar tarball GeoLite2-Country
+      ansible.builtin.get_url:
+        url: "https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz"
+        url_username: "{{ sendguard_maxmind_account_id }}"
+        url_password: "{{ sendguard_maxmind_license_key }}"
+        force_basic_auth: true
+        dest: "{{ sendguard_db_dir }}/GeoLite2-Country.tar.gz"
+        mode: "0640"
+      register: sg_mmdb_dl
+
+    - name: Extraer el .mmdb del tarball
+      ansible.builtin.shell: >-
+        tar -xzf "{{ sendguard_db_dir }}/GeoLite2-Country.tar.gz"
+        --wildcards --strip-components=1 -C "{{ sendguard_db_dir }}" '*.mmdb'
+      args:
+        creates: "{{ sendguard_db_dir }}/GeoLite2-Country.mmdb"
+
+    - name: Eliminar el tarball descargado
+      ansible.builtin.file:
+        path: "{{ sendguard_db_dir }}/GeoLite2-Country.tar.gz"
+        state: absent
+
+- name: Confirmar estado final de la DB MaxMind
+  ansible.builtin.stat:
+    path: "{{ sendguard_db_dir }}/GeoLite2-Country.mmdb"
+  register: sg_mmdb_final
+
+- name: Fijar db_path de GeoIP si la DB está disponible
+  ansible.builtin.set_fact:
+    sendguard_geoip_db_path: "{{ sendguard_db_dir + '/GeoLite2-Country.mmdb' if sg_mmdb_final.stat.exists else '' }}"
+
+- name: Instalar cron de actualización semanal de GeoLite2
+  ansible.builtin.cron:
+    name: "SendGuard GeoIP update"
+    weekday: "{{ sendguard_maxmind_cron_weekday }}"
+    hour: "{{ sendguard_maxmind_cron_hour }}"
+    minute: "{{ sendguard_maxmind_cron_minute }}"
+    job: >-
+      MM_ID=$(grep 'maxmind_account_id' {{ sendguard_config_dir }}/agent.yaml | sed 's/.*: "\(.*\)"/\1/');
+      MM_KEY=$(grep 'maxmind_license_key' {{ sendguard_config_dir }}/agent.yaml | sed 's/.*: "\(.*\)"/\1/');
+      curl -fsSL -L -u "$MM_ID:$MM_KEY"
+      'https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz'
+      -o '{{ sendguard_db_dir }}/GeoLite2-Country.tar.gz'
+      && tar -xzf '{{ sendguard_db_dir }}/GeoLite2-Country.tar.gz' --wildcards --strip-components=1
+      -C '{{ sendguard_db_dir }}' '*.mmdb'
+      && rm -f '{{ sendguard_db_dir }}/GeoLite2-Country.tar.gz'
+      && systemctl reload-or-restart sendguard-agent
+  when: sg_mmdb_final.stat.exists

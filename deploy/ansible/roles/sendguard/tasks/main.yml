@@ -1,0 +1,102 @@
+---
+# ── SendGuard · flujo principal del rol ──────────────────────────────────────
+
+- name: Preflight y autodetección
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Verificar que los binarios existen en el control node
+  ansible.builtin.stat:
+    path: "{{ sendguard_dist_dir }}/{{ item }}"
+  loop:
+    - sendguard-agent
+    - sendguard-ctl
+    - sendguard-policyd
+  register: sg_bin_local
+  delegate_to: localhost
+  become: false
+
+- name: Abortar si falta algún binario (ejecuta `make package` en el repo)
+  ansible.builtin.fail:
+    msg: >-
+      Falta {{ item.item }} en {{ sendguard_dist_dir }}.
+      Compila primero con `make package` (o build/build-ctl/build-policyd) en la raíz del repo.
+  loop: "{{ sg_bin_local.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: not item.stat.exists
+
+- name: Crear directorios de SendGuard
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ sendguard_config_dir }}"
+    - "{{ sendguard_db_dir }}"
+
+- name: Copiar binarios a {{ sendguard_bin_dir }}
+  ansible.builtin.copy:
+    src: "{{ sendguard_dist_dir }}/{{ item }}"
+    dest: "{{ sendguard_bin_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - sendguard-agent
+    - sendguard-ctl
+    - sendguard-policyd
+  notify:
+    - Restart sendguard-agent
+    - Restart sendguard-policyd
+
+- name: Instalar/actualizar la DB GeoIP MaxMind
+  ansible.builtin.import_tasks: maxmind.yml
+  when:
+    - sendguard_maxmind_account_id | length > 0
+    - sendguard_maxmind_license_key | length > 0
+
+- name: Asegurar geoip_db_path definido cuando no hay MaxMind
+  ansible.builtin.set_fact:
+    sendguard_geoip_db_path: "{{ sendguard_geoip_db_path | default('') }}"
+
+- name: Generar agent.yaml
+  ansible.builtin.template:
+    src: agent.yaml.j2
+    dest: "{{ sendguard_config_dir }}/agent.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+    backup: true
+  notify:
+    - Restart sendguard-agent
+    - Restart sendguard-policyd
+
+- name: Instalar units de systemd
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - sendguard-agent.service
+    - sendguard-policyd.service
+  notify:
+    - Reload systemd
+    - Restart sendguard-agent
+    - Restart sendguard-policyd
+
+- name: Forzar handlers pendientes antes de habilitar servicios
+  ansible.builtin.meta: flush_handlers
+
+- name: Habilitar y arrancar sendguard-agent y sendguard-policyd
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - sendguard-agent
+    - sendguard-policyd

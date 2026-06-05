@@ -1,0 +1,125 @@
+{{ ansible_managed | comment }}
+# SendGuard — configuración generada por Ansible. NO editar a mano en el host:
+# los cambios se sobrescriben en el próximo despliegue. Ajusta group_vars/host_vars.
+server_id: "{{ sendguard_server_id }}"
+client_name: "{{ sendguard_client_name }}"
+
+controller:
+  url: "{{ sendguard_controller_url }}"
+  api_key: "{{ sendguard_controller_api_key }}"
+  sync_interval: {{ sendguard_controller_sync_interval }}
+  batch_size: {{ sendguard_controller_batch_size }}
+
+zimbra:
+  logs:
+    main: "{{ sendguard_mail_log }}"
+{% if sendguard_mailbox_log | length > 0 %}
+    mailbox: "{{ sendguard_mailbox_log }}"
+{% endif %}
+  workers: {{ sendguard_zimbra_workers }}
+  postfix_sbin: "{{ sendguard_zimbra_sbin }}"
+  postfix_conf: "{{ sendguard_zimbra_conf }}"
+
+rules:
+  auth_failed:
+    max_auth_failures: {{ sendguard_rules.auth_failed.max_auth_failures }}
+    scan_time: {{ sendguard_rules.auth_failed.scan_time }}
+  number_messages:
+    max_messages: {{ sendguard_rules.number_messages.max_messages }}
+    scan_time: {{ sendguard_rules.number_messages.scan_time }}
+  sasl_connections:
+    max_sasl_connections: {{ sendguard_rules.sasl_connections.max_sasl_connections }}
+    max_unique_ips: {{ sendguard_rules.sasl_connections.max_unique_ips }}
+    scan_time: {{ sendguard_rules.sasl_connections.scan_time }}
+  dist_brute_force:
+    max_ips: {{ sendguard_rules.dist_brute_force.max_ips }}
+    scan_time: {{ sendguard_rules.dist_brute_force.scan_time }}
+  impossible_traveler:
+    window_minutes: {{ sendguard_rules.impossible_traveler.window_minutes }}
+    # Microsoft Exchange Online (Outlook Mobile/EOP) para modo DB local MaxMind.
+    # Google/Apple ya cubiertos por proxy_cidrs globales; AWS excluido a propósito.
+    trusted_cidrs:
+{% for r in sendguard_impossible_trusted_cidrs %}
+      - "{{ r.cidr }}"{{ ' ' * (20 - r.cidr | length) }}# {{ r.note }}
+{% endfor %}
+  queue_monitor:
+    queue_threshold: {{ sendguard_rules.queue_monitor.queue_threshold }}
+    scan_time: {{ sendguard_rules.queue_monitor.scan_time }}
+  domain_discovery:
+    max_domains: {{ sendguard_rules.domain_discovery.max_domains }}
+    scan_time: {{ sendguard_rules.domain_discovery.scan_time }}
+  bounce_rate:
+    max_bounces: {{ sendguard_rules.bounce_rate.max_bounces }}
+    scan_time: {{ sendguard_rules.bounce_rate.scan_time }}
+  rcpt_flood:
+    max_recipients: {{ sendguard_rules.rcpt_flood.max_recipients }}
+    scan_time: {{ sendguard_rules.rcpt_flood.scan_time }}
+  password_spray:
+    max_accounts: {{ sendguard_rules.password_spray.max_accounts }}
+    scan_time: {{ sendguard_rules.password_spray.scan_time }}
+  account_takeover:
+    min_failures: {{ sendguard_rules.account_takeover.min_failures }}
+    correl_window: {{ sendguard_rules.account_takeover.correl_window }}
+
+geoip:
+{% if sendguard_geoip_db_path | length > 0 %}
+  db_path: "{{ sendguard_geoip_db_path }}"
+{% else %}
+  # db_path no configurado — usando HTTP API fallback
+{% endif %}
+  maxmind_account_id: "{{ sendguard_maxmind_account_id }}"
+  maxmind_license_key: "{{ sendguard_maxmind_license_key }}"
+  api_url: "{{ sendguard_geoip_api_url }}"
+  cache_ttl: {{ sendguard_geoip_cache_ttl }}
+  allowed_countries:
+{% for c in sendguard_allowed_countries %}
+    - "{{ c }}"
+{% endfor %}
+
+local_db:
+  path: "{{ sendguard_db_dir }}/sendguard.db"
+  max_size_mb: {{ sendguard_local_db_max_size_mb }}
+
+firewall:
+  backend: "{{ sendguard_firewall_backend }}"
+  ban_seconds: {{ sendguard_ban_seconds }}
+
+api:
+  listen: "{{ sendguard_api_listen }}"
+
+abuseipdb:
+  api_key: "{{ sendguard_abuseipdb_key }}"
+  cache_ttl: {{ sendguard_abuseipdb_cache_ttl }}
+
+notification:
+  telegram:
+    token: "{{ sendguard_telegram_token }}"
+    chat_id: "{{ sendguard_telegram_chat_id }}"
+  email:
+    from: "{{ sendguard_email_from }}"
+    to:
+{% for t in sendguard_email_to %}
+      - "{{ t }}"
+{% endfor %}
+  cooldown_seconds: {{ sendguard_notify_cooldown_seconds }}
+  max_per_minute: {{ sendguard_notify_max_per_minute }}
+  on_actions:
+{% for a in sendguard_notify_on_actions %}
+    - "{{ a }}"
+{% endfor %}
+
+daily_report:
+  hour: {{ sendguard_daily_report_hour }}
+
+policy_daemon:
+  listen: "{{ sendguard_policyd_listen }}"
+
+whitelist:
+  accounts:
+{% for a in sendguard_whitelist_accounts %}
+    - "{{ a }}"
+{% endfor %}
+  ips:
+{% for ip in sendguard_whitelist_ips %}
+    - "{{ ip }}"
+{% endfor %}

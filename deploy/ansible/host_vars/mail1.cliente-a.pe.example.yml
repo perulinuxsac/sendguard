@@ -1,0 +1,19 @@
+# ── Variables POR HOST (ejemplo) ─────────────────────────────────────────────
+# Renombra a host_vars/<nombre-de-inventario>.yml (sin .example).
+# Solo necesitas lo que difiera de group_vars/all.yml.
+
+# server_id por defecto = nombre de inventario; sobreescríbelo si quieres otro.
+# sendguard_server_id: "cliente-a-mail1"
+
+# Si el cliente difiere del global:
+# sendguard_client_name: "Laboratorios ABC"
+
+# Redes de oficina y cuentas exentas de detección (específicas del cliente):
+sendguard_whitelist_ips:
+  - "190.123.45.0/24"
+sendguard_whitelist_accounts:
+  - "backup@cliente-a.pe"
+
+# Destinatarios de correo propios del cliente (si no usas el global):
+# sendguard_email_to:
+#   - "admin@cliente-a.pe"

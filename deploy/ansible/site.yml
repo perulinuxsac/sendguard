@@ -1,0 +1,7 @@
+---
+- name: Desplegar SendGuard en servidores Zimbra
+  hosts: sendguard
+  become: true
+  gather_facts: true
+  roles:
+    - sendguard

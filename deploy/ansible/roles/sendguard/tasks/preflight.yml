@@ -1,0 +1,80 @@
+---
+# ── Verificaciones previas y autodetección (réplica de install.sh) ───────────
+
+- name: Verificar que systemd está presente
+  ansible.builtin.command: systemctl --version
+  changed_when: false
+
+- name: Seleccionar backend de firewall según familia de OS
+  ansible.builtin.set_fact:
+    sendguard_firewall_backend: "{{ 'ufw' if ansible_os_family == 'Debian' else 'firewalld' }}"
+
+- name: Verificar firewalld activo (RHEL/Rocky)
+  ansible.builtin.command: systemctl is-active firewalld
+  changed_when: false
+  when: sendguard_firewall_backend == 'firewalld'
+
+- name: Verificar ufw activo (Ubuntu/Debian)
+  ansible.builtin.command: ufw status
+  register: sg_ufw_status
+  changed_when: false
+  failed_when: "'Status: active' not in sg_ufw_status.stdout"
+  when: sendguard_firewall_backend == 'ufw'
+
+- name: Detectar ruta sbin de Postfix de Zimbra
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /opt/zimbra/common/sbin
+    - /opt/zimbra/postfix/sbin
+  register: sg_sbin_stat
+
+- name: Detectar ruta conf de Postfix de Zimbra
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /opt/zimbra/common/conf
+    - /opt/zimbra/postfix/conf
+  register: sg_conf_stat
+
+- name: Fijar rutas de Zimbra
+  ansible.builtin.set_fact:
+    sendguard_zimbra_sbin: "{{ (sg_sbin_stat.results | selectattr('stat.exists') | map(attribute='item') | list | first) | default('') }}"
+    sendguard_zimbra_conf: "{{ (sg_conf_stat.results | selectattr('stat.exists') | map(attribute='item') | list | first) | default('') }}"
+
+- name: Abortar si no se encontró Zimbra
+  ansible.builtin.fail:
+    msg: "No se encontró Zimbra en /opt/zimbra (sbin/conf). SendGuard requiere un servidor Zimbra."
+  when: sendguard_zimbra_sbin == '' or sendguard_zimbra_conf == ''
+
+- name: Detectar log principal de correo
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /var/log/maillog
+    - /var/log/mail.log
+  register: sg_maillog_stat
+
+- name: Fijar ruta del mail log
+  ansible.builtin.set_fact:
+    sendguard_mail_log: "{{ (sg_maillog_stat.results | selectattr('stat.exists') | map(attribute='item') | list | first) | default('') }}"
+
+- name: Abortar si no se encontró el mail log
+  ansible.builtin.fail:
+    msg: "No se encontró /var/log/maillog ni /var/log/mail.log."
+  when: sendguard_mail_log == ''
+
+- name: Detectar mailbox.log de Zimbra (opcional)
+  ansible.builtin.stat:
+    path: /opt/zimbra/log/mailbox.log
+  register: sg_mailbox_stat
+
+- name: Fijar ruta del mailbox.log
+  ansible.builtin.set_fact:
+    sendguard_mailbox_log: "{{ '/opt/zimbra/log/mailbox.log' if sg_mailbox_stat.stat.exists else '' }}"
+
+- name: Validar que client_name está definido
+  ansible.builtin.assert:
+    that:
+      - sendguard_client_name | length > 0
+    fail_msg: "sendguard_client_name es obligatorio (defínelo en group_vars o host_vars)."

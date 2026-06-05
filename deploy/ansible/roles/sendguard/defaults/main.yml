@@ -1,0 +1,100 @@
+---
+# ── SendGuard · valores por defecto del rol ──────────────────────────────────
+# Todo lo que aquí aparece puede sobreescribirse en group_vars/ o host_vars/.
+# Los secretos (Telegram, MaxMind, AbuseIPDB) van en group_vars/all.yml cifrado
+# con ansible-vault — NO se ponen aquí.
+
+# ── Identidad del servidor (normalmente por host) ────────────────────────────
+# server_id por defecto = nombre de inventario; cámbialo en host_vars si quieres.
+sendguard_server_id: "{{ inventory_hostname }}"
+sendguard_client_name: ""          # OBLIGATORIO: nombre del cliente
+
+# ── Artefactos (binarios ya compilados) ──────────────────────────────────────
+# Ejecuta `make package` (o build/build-ctl/build-policyd) en la raíz del repo
+# antes de desplegar; los binarios quedan en dist/ y el rol los copia desde ahí.
+sendguard_dist_dir: "{{ playbook_dir }}/../../dist"
+sendguard_bin_dir: "/usr/local/bin"
+sendguard_config_dir: "/etc/sendguard"
+sendguard_db_dir: "/var/lib/sendguard"
+
+# ── Países permitidos (compartido) ───────────────────────────────────────────
+sendguard_allowed_countries:
+  - "PE"
+  - "US"
+
+# ── Whitelist (normalmente por host) ─────────────────────────────────────────
+sendguard_whitelist_ips: []        # CIDRs de oficina, ej: ["190.x.y.0/24"]
+sendguard_whitelist_accounts: []   # cuentas exentas, ej: ["backup@cliente.pe"]
+
+# ── Controller central (vacío = standalone) ──────────────────────────────────
+sendguard_controller_url: ""
+sendguard_controller_api_key: ""
+sendguard_controller_sync_interval: 30
+sendguard_controller_batch_size: 100
+
+# ── Notificaciones (compartido salvo destinatarios) ──────────────────────────
+sendguard_telegram_token: ""
+sendguard_telegram_chat_id: ""
+sendguard_email_from: ""
+sendguard_email_to: []             # lista de destinatarios
+sendguard_notify_on_actions: []    # vacío = notificar todo; ej: ["block_ip","suspend_account"]
+sendguard_notify_cooldown_seconds: 300
+sendguard_notify_max_per_minute: 10
+
+# ── AbuseIPDB (compartido) ───────────────────────────────────────────────────
+sendguard_abuseipdb_key: ""
+sendguard_abuseipdb_cache_ttl: 24
+
+# ── GeoIP / MaxMind (compartido) ─────────────────────────────────────────────
+sendguard_maxmind_account_id: ""
+sendguard_maxmind_license_key: ""
+sendguard_geoip_api_url: "https://ipinfo.io"
+sendguard_geoip_cache_ttl: 24
+# Día/hora del cron de actualización de la DB (jueves 3am; MaxMind publica mar/vie).
+sendguard_maxmind_cron_weekday: "4"
+sendguard_maxmind_cron_hour: "3"
+sendguard_maxmind_cron_minute: "0"
+
+# ── Firewall / API / report ──────────────────────────────────────────────────
+sendguard_ban_seconds: 3600
+sendguard_api_listen: "127.0.0.1:9099"
+sendguard_policyd_listen: "127.0.0.1:9100"
+sendguard_daily_report_hour: 8
+sendguard_local_db_max_size_mb: 100
+sendguard_zimbra_workers: 4
+
+# ── Umbrales de los módulos de detección ─────────────────────────────────────
+sendguard_rules:
+  auth_failed:        { max_auth_failures: 5, scan_time: 300 }
+  number_messages:    { max_messages: 300, scan_time: 3600 }
+  sasl_connections:   { max_sasl_connections: 20, max_unique_ips: 5, scan_time: 300 }
+  dist_brute_force:   { max_ips: 5, scan_time: 300 }
+  impossible_traveler: { window_minutes: 30 }
+  queue_monitor:      { queue_threshold: 2500, scan_time: 3600 }
+  domain_discovery:   { max_domains: 10, scan_time: 600 }
+  bounce_rate:        { max_bounces: 50, scan_time: 300 }
+  rcpt_flood:         { max_recipients: 50, scan_time: 300 }
+  password_spray:     { max_accounts: 10, scan_time: 300 }
+  account_takeover:   { min_failures: 5, correl_window: 600 }
+
+# Microsoft Exchange Online — lista oficial completa (endpoints.office.com,
+# serviceArea "Exchange"). Cubre Outlook Mobile / Exchange Online / EOP cuando se
+# usa la DB local MaxMind (que no trae datos de organización). Google y Apple ya
+# quedan cubiertos por los proxy_cidrs globales embebidos en el binario; AWS se
+# excluye a propósito (rango compartido con todo EC2). Revisar ~anual.
+sendguard_impossible_trusted_cidrs:
+  - { cidr: "13.107.6.152/31",   note: "Microsoft Exchange Online" }
+  - { cidr: "13.107.18.10/31",   note: "Microsoft Exchange Online" }
+  - { cidr: "13.107.128.0/22",   note: "Microsoft Exchange Online" }
+  - { cidr: "23.103.160.0/20",   note: "Microsoft Exchange Online" }
+  - { cidr: "40.92.0.0/15",      note: "Microsoft Exchange Online" }
+  - { cidr: "40.96.0.0/13",      note: "Microsoft Exchange Online" }
+  - { cidr: "40.104.0.0/15",     note: "Microsoft Exchange Online" }
+  - { cidr: "40.107.0.0/16",     note: "Microsoft Exchange Online" }
+  - { cidr: "52.96.0.0/13",      note: "Microsoft Exchange Online" }
+  - { cidr: "52.238.78.88/32",   note: "Microsoft Exchange Online" }
+  - { cidr: "104.47.0.0/17",     note: "Microsoft Exchange Online Protection (EOP)" }
+  - { cidr: "131.253.33.215/32", note: "Microsoft Exchange Online" }
+  - { cidr: "132.245.0.0/16",    note: "Microsoft Exchange Online" }
+  - { cidr: "150.171.32.0/22",   note: "Microsoft Exchange Online" }
+  - { cidr: "204.79.197.215/32", note: "Microsoft Exchange Online" }
