@@ -10,7 +10,10 @@
 // el testing sin necesidad de llamadas HTTP reales.
 //
 // Fuente: eventos AuthSuccess con IP y cuenta conocidas.
-// Acción: suspensión de cuenta (ActionSuspendAcct), score 85.
+// Acción: suspensión de cuenta (ActionSuspendAcct, score 85) más bloqueo de la(s)
+// IP(s) atacante(s) — las de país NO incluido en AllowedCountries. Si ambos logins
+// (actual y previo) provienen de países no permitidos, se bloquean los dos; la IP de
+// un país permitido se considera el usuario legítimo y no se toca.
 package impossibletraveler
 
 import (
@@ -230,19 +233,73 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 		m.cfg.WindowMinutes,
 	)
 
-	return []detection.Alert{{
+	// Identificar la(s) IP(s) atacante(s): las de país NO permitido entre el login
+	// actual y el previo. La IP de un país permitido (si la hay) es casi siempre el
+	// usuario legítimo, así que NO se bloquea. Se prioriza la IP actual sobre la
+	// previa solo para elegir cuál acompaña la suspensión; ambas se bloquean si las
+	// dos son extranjeras.
+	//
+	// Por qué importa el orden: el atacante suele autenticarse primero (queda como
+	// login previo) y el usuario legítimo después, de modo que ev.IP es la IP legítima
+	// y prev.ip la del atacante. Usar ev.IP ciegamente bloqueaba al usuario correcto
+	// y dejaba libre al atacante; peor aún, si ev.IP es de país permitido el enforcer
+	// omitía la suspensión completa.
+	// Sin lista de países permitidos no hay forma de distinguir por país la IP
+	// atacante de la legítima ("vacío = todos los países son normales"). En ese caso
+	// se conserva el comportamiento conservador: suspender señalando la IP del login
+	// actual, sin bloquear ambas IPs.
+	type ipCountry struct{ ip, country string }
+	var attackers []ipCountry
+	if len(m.cfg.AllowedCountries) > 0 {
+		for _, c := range []ipCountry{{ev.IP, country}, {prev.ip, prev.country}} {
+			if !m.cfg.isAllowed(c.country) {
+				attackers = append(attackers, c)
+			}
+		}
+	}
+
+	// El módulo solo llega aquí si al menos un país no está permitido (ver el guard
+	// isAllowed(prev) && isAllowed(country) más arriba), así que attackers tiene ≥1
+	// elemento. El fallback a ev.IP es defensivo.
+	suspendIP, suspendCountry := ev.IP, country
+	if len(attackers) > 0 {
+		suspendIP, suspendCountry = attackers[0].ip, attackers[0].country
+	}
+
+	alerts := []detection.Alert{{
 		Module:    m.Name(),
 		Score:     score,
 		Severity:  detection.SeverityFromScore(score),
 		Action:    detection.ActionSuspendAcct,
 		Timestamp: ev.Timestamp,
 		Server:    ev.Server,
-		IP:        ev.IP,
+		IP:        suspendIP,
 		Account:   ev.Account,
 		Domain:    ev.Domain,
-		Country:   country,
+		Country:   suspendCountry,
 		Reasons:   []string{reason},
 	}}
+
+	// Si ambos logins vinieron de países no permitidos, bloquear también la segunda
+	// IP atacante. La primera ya la bloquea el enforcer al ejecutar la suspensión.
+	for i := 1; i < len(attackers); i++ {
+		a := attackers[i]
+		alerts = append(alerts, detection.Alert{
+			Module:    m.Name(),
+			Score:     score,
+			Severity:  detection.SeverityFromScore(score),
+			Action:    detection.ActionBlockIP,
+			Timestamp: ev.Timestamp,
+			Server:    ev.Server,
+			IP:        a.ip,
+			Account:   ev.Account,
+			Domain:    ev.Domain,
+			Country:   a.country,
+			Reasons:   []string{reason},
+		})
+	}
+
+	return alerts
 }
 
 // pruneStale elimina del mapa las cuentas cuyo último login es más antiguo que

@@ -284,6 +284,77 @@ func TestAllowedCountriesOneNotPermittedAlerts(t *testing.T) {
 	}
 }
 
+// TestAttackerIPTargetedNotLegitUser reproduce el ataque real: el atacante (DE,
+// país no permitido) se autentica primero y el usuario legítimo (PE, permitido)
+// después. La alerta de suspensión debe apuntar a la IP del atacante (DE), no a la
+// del usuario legítimo (PE) — de lo contrario el enforcer la saltaría por país
+// permitido y el atacante quedaría libre.
+func TestAttackerIPTargetedNotLegitUser(t *testing.T) {
+	cfg := impossibletraveler.Config{
+		WindowMinutes:    30,
+		AllowedCountries: []string{"PE", "US"},
+	}
+	geo := &mockGeoIP{countries: map[string]string{
+		"49.12.77.100":    "DE", // atacante
+		"161.132.178.197": "PE", // usuario legítimo
+	}}
+	m := impossibletraveler.New(cfg, geo)
+	now := time.Now()
+
+	// El atacante (DE) entra primero, el usuario legítimo (PE) después.
+	m.Handle(authEvent("maguilar@perulinux.pe", "49.12.77.100", now))
+	alerts := m.Handle(authEvent("maguilar@perulinux.pe", "161.132.178.197", now.Add(11*time.Minute)))
+
+	if len(alerts) != 1 {
+		t.Fatalf("se esperaba 1 alerta, got %d", len(alerts))
+	}
+	a := alerts[0]
+	if a.Action != detection.ActionSuspendAcct {
+		t.Errorf("Action: got %q, want ActionSuspendAcct", a.Action)
+	}
+	if a.IP != "49.12.77.100" {
+		t.Errorf("IP: got %q, want %q (la IP atacante extranjera, no la peruana legítima)", a.IP, "49.12.77.100")
+	}
+	if a.Country != "DE" {
+		t.Errorf("Country: got %q, want %q", a.Country, "DE")
+	}
+}
+
+// TestBothCountriesForeignBlocksBoth verifica que si ambos logins provienen de
+// países no permitidos se suspende la cuenta y se bloquean AMBAS IPs.
+func TestBothCountriesForeignBlocksBoth(t *testing.T) {
+	cfg := impossibletraveler.Config{
+		WindowMinutes:    30,
+		AllowedCountries: []string{"PE", "US"},
+	}
+	geo := &mockGeoIP{countries: map[string]string{
+		"178.20.210.21": "DE",
+		"91.187.142.76": "RS",
+	}}
+	m := impossibletraveler.New(cfg, geo)
+	now := time.Now()
+
+	m.Handle(authEvent("maguilar@perulinux.pe", "178.20.210.21", now))
+	alerts := m.Handle(authEvent("maguilar@perulinux.pe", "91.187.142.76", now.Add(14*time.Minute)))
+
+	if len(alerts) != 2 {
+		t.Fatalf("ambos países extranjeros: se esperaban 2 alertas (suspend + block), got %d", len(alerts))
+	}
+	if alerts[0].Action != detection.ActionSuspendAcct {
+		t.Errorf("alerts[0].Action: got %q, want ActionSuspendAcct", alerts[0].Action)
+	}
+	if alerts[1].Action != detection.ActionBlockIP {
+		t.Errorf("alerts[1].Action: got %q, want ActionBlockIP", alerts[1].Action)
+	}
+	// Entre las dos alertas deben aparecer ambas IPs atacantes.
+	got := map[string]bool{alerts[0].IP: true, alerts[1].IP: true}
+	for _, ip := range []string{"178.20.210.21", "91.187.142.76"} {
+		if !got[ip] {
+			t.Errorf("falta bloquear la IP atacante %s", ip)
+		}
+	}
+}
+
 func TestTrustedProxyIgnored(t *testing.T) {
 	cfg := impossibletraveler.Config{
 		WindowMinutes: 60,
