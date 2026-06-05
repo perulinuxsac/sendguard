@@ -12,14 +12,21 @@
 - name: Descargar y extraer GeoLite2-Country (si falta)
   when: not sg_mmdb_stat.stat.exists
   block:
+    # Se usa curl en vez de get_url a propósito: la API de MaxMind responde con un
+    # 302 redirect a una URL firmada en otro host. get_url (force_basic_auth)
+    # reenvía la cabecera Authorization al redirect y la URL firmada la rechaza con
+    # HTTP 400. curl -L NO reenvía credenciales a un host distinto, igual que el
+    # cron de actualización de abajo. no_log evita exponer las credenciales.
     - name: Descargar tarball GeoLite2-Country
-      ansible.builtin.get_url:
-        url: "https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz"
-        url_username: "{{ sendguard_maxmind_account_id }}"
-        url_password: "{{ sendguard_maxmind_license_key }}"
-        force_basic_auth: true
-        dest: "{{ sendguard_db_dir }}/GeoLite2-Country.tar.gz"
-        mode: "0640"
+      ansible.builtin.command:
+        cmd: >-
+          curl -fsSL
+          -u "{{ sendguard_maxmind_account_id }}:{{ sendguard_maxmind_license_key }}"
+          "https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz"
+          -o "{{ sendguard_db_dir }}/GeoLite2-Country.tar.gz"
+      args:
+        creates: "{{ sendguard_db_dir }}/GeoLite2-Country.tar.gz"
+      no_log: true
       register: sg_mmdb_dl
 
     - name: Extraer el .mmdb del tarball
