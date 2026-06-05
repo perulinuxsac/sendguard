@@ -51,6 +51,45 @@ rules:
 
   impossible_traveler:
     window_minutes: 30      # login imposible si < 30 min entre países distintos
+    # trusted_orgs: detección por nombre de organización (requiere modo API ipinfo.io).
+    # DESACTIVADO por defecto: con la DB local MaxMind (GeoLite2-Country) no hay datos
+    # de organización/ASN, así que trusted_orgs se ignora y solo genera un WARN al
+    # arrancar. La cobertura equivalente se da por CIDR abajo. (Para reactivarlo hay
+    # que volver al modo API en la sección geoip.)
+    # trusted_orgs:
+    #   - "MICROSOFT"
+    #   - "GOOGLE"
+    #   - "APPLE"
+    #   - "AMAZON"
+    #
+    # trusted_cidrs: equivalente por rango para el modo DB local.
+    #   - GOOGLE  → ya cubierto GLOBALMENTE por proxy_cidrs (74.125.0.0/16,
+    #               209.85.128.0/17 = el SPF de login/proxy de Google). El resto es
+    #               GCP, un rango enorme y compartido que NO se debe confiar.
+    #   - APPLE   → ya cubierto GLOBALMENTE por proxy_cidrs (17.0.0.0/8 = todo Apple).
+    #   - AMAZON  → NO se incluye a propósito: AWS SES/WorkMail no publica un rango
+    #               dedicado; confiar su única opción (EC2) equivale a confiar en
+    #               TODO AWS y abre un bypass para atacantes en EC2.
+    #   - MICROSOFT → lista oficial COMPLETA de Exchange Online (fuente:
+    #               endpoints.office.com/endpoints/worldwide, serviceArea "Exchange"),
+    #               porque proxy_cidrs global solo trae un subconjunto. Cubre Outlook
+    #               Mobile / Exchange Online / EOP. Revisar ~anual.
+    trusted_cidrs:
+      - "13.107.6.152/31"   # Microsoft Exchange Online
+      - "13.107.18.10/31"   # Microsoft Exchange Online
+      - "13.107.128.0/22"   # Microsoft Exchange Online
+      - "23.103.160.0/20"   # Microsoft Exchange Online
+      - "40.92.0.0/15"      # Microsoft Exchange Online
+      - "40.96.0.0/13"      # Microsoft Exchange Online
+      - "40.104.0.0/15"     # Microsoft Exchange Online
+      - "40.107.0.0/16"     # Microsoft Exchange Online
+      - "52.96.0.0/13"      # Microsoft Exchange Online
+      - "52.238.78.88/32"   # Microsoft Exchange Online
+      - "104.47.0.0/17"     # Microsoft Exchange Online Protection (EOP)
+      - "131.253.33.215/32" # Microsoft Exchange Online
+      - "132.245.0.0/16"    # Microsoft Exchange Online
+      - "150.171.32.0/22"   # Microsoft Exchange Online
+      - "204.79.197.215/32" # Microsoft Exchange Online
 
   queue_monitor:
     queue_threshold: 2500   # deferrals al mismo dominio destino en la ventana
