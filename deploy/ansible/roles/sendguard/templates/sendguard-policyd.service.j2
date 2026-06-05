@@ -1,3 +1,4 @@
+{{ ansible_managed | comment }}
 [Unit]
 Description=SendGuard Policy Daemon (Postfix integration)
 Documentation=https://github.com/perulinux/sendguard
@@ -6,14 +7,14 @@ Requires=sendguard-agent.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/sendguard-policyd -config /etc/sendguard/agent.yaml
+ExecStart={{ sendguard_bin_dir }}/sendguard-policyd -config {{ sendguard_config_dir }}/agent.yaml
 Restart=always
 RestartSec=5
 User=root
 Group=root
 
 # El daemon es local y de bajo riesgo; no necesita namespace sandboxing
-# para poder leer /etc/sendguard/agent.yaml sin restricciones.
+# para poder leer {{ sendguard_config_dir }}/agent.yaml sin restricciones.
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=sendguard-policyd

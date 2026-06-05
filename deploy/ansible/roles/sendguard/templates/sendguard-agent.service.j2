@@ -1,3 +1,4 @@
+{{ ansible_managed | comment }}
 [Unit]
 Description=SendGuard Agent — protección SMTP/IMAP para Zimbra
 Documentation=https://github.com/perulinux/sendguard
@@ -7,7 +8,7 @@ Wants=zimbra.service
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/sendguard-agent -config /etc/sendguard/agent.yaml
+ExecStart={{ sendguard_bin_dir }}/sendguard-agent -config {{ sendguard_config_dir }}/agent.yaml
 Restart=on-failure
 RestartSec=10s
 StandardOutput=journal

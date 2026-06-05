@@ -15,6 +15,8 @@ zimbra:
     main: "{{ sendguard_mail_log }}"
 {% if sendguard_mailbox_log | length > 0 %}
     mailbox: "{{ sendguard_mailbox_log }}"
+{% else %}
+    mailbox: ""   # mailbox.log no detectado — IMAP/POP3/SOAP deshabilitado (vacío explícito: el binario default-ea esta ruta si se omite)
 {% endif %}
   workers: {{ sendguard_zimbra_workers }}
   postfix_sbin: "{{ sendguard_zimbra_sbin }}"

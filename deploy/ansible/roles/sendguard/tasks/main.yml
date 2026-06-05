@@ -74,8 +74,8 @@
     - Restart sendguard-policyd
 
 - name: Instalar units de systemd
-  ansible.builtin.copy:
-    src: "{{ item }}"
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
     dest: "/etc/systemd/system/{{ item }}"
     owner: root
     group: root
