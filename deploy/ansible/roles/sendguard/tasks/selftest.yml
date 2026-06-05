@@ -1,0 +1,31 @@
+---
+# ── Self-test INTRUSIVO (opt-in) ─────────────────────────────────────────────
+# Ejecuta deploy/test_sendguard.sh en el host: baja umbrales, reinicia el agente,
+# inyecta ataques sintéticos (que provocan bloqueos de IP de prueba y SUSPENSIÓN
+# de cuentas de prueba como admin@/bulk@/ceo@), y restaura los umbrales al final.
+#
+# ⚠ NO ejecutar en un servidor de producción con cuentas reales que pudieran
+#   coincidir con las del script. Pensado para un host de staging o recién
+#   instalado. Solo corre con: ansible-playbook site.yml --tags selftest
+
+- name: Copiar el script de self-test al host
+  ansible.builtin.copy:
+    src: "{{ sendguard_selftest_script }}"
+    dest: /opt/sendguard-test_sendguard.sh
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Ejecutar el self-test integral
+  ansible.builtin.command: bash /opt/sendguard-test_sendguard.sh
+  register: sg_selftest
+  changed_when: false
+
+- name: Mostrar salida del self-test
+  ansible.builtin.debug:
+    var: sg_selftest.stdout_lines
+
+- name: Eliminar el script del host
+  ansible.builtin.file:
+    path: /opt/sendguard-test_sendguard.sh
+    state: absent

@@ -100,3 +100,14 @@
   loop:
     - sendguard-agent
     - sendguard-policyd
+
+- name: Verificación post-deploy (segura, no intrusiva)
+  ansible.builtin.import_tasks: verify.yml
+
+# Self-test intrusivo: solo se ejecuta con `--tags selftest` (tag `never` lo
+# excluye de los despliegues normales). Ver tasks/selftest.yml para las advertencias.
+- name: Self-test integral (opt-in)
+  ansible.builtin.import_tasks: selftest.yml
+  tags:
+    - selftest
+    - never

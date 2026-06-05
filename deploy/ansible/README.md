@@ -77,6 +77,30 @@ deploy/ansible/
    ansible-playbook site.yml --ask-vault-pass --limit mail1.cliente-a.pe
    ```
 
+## Verificación post-deploy
+
+El rol incluye **dos niveles**:
+
+- **Smoke-check (automático, seguro)** — corre al final de cada despliegue. No
+  modifica nada: confirma que `sendguard-agent` y `sendguard-policyd` están
+  activos, reporta la versión instalada y sondea el endpoint `GET /health` de la
+  API. Si algo falla, el playbook falla.
+
+- **Self-test integral (opt-in, intrusivo)** — ejecuta `deploy/test_sendguard.sh`
+  en el host: baja umbrales, reinicia el agente, inyecta ataques sintéticos para
+  validar los 9 módulos de detección y restaura los umbrales al terminar.
+
+  ```bash
+  ansible-playbook site.yml --ask-vault-pass --tags selftest --limit staging-mail1
+  ```
+
+  > ⚠ **No lo corras en producción con cuentas reales.** El script inyecta
+  > ataques que provocan bloqueos de IPs de prueba y **suspensión de cuentas de
+  > prueba** (`admin@`, `bulk@`, `ceo@`, `flood@`, `spammer@`…). Si alguna existe
+  > de verdad en ese servidor, quedará bloqueada. Úsalo en un host de staging o
+  > recién instalado. Por eso está excluido de los deploys normales (tag `never`)
+  > y solo se ejecuta con `--tags selftest`.
+
 ## Operación
 
 - **Actualizar a una versión nueva**: `make package` en el repo y vuelve a

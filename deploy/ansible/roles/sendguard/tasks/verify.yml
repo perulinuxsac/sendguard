@@ -1,0 +1,36 @@
+---
+# ── Verificación post-deploy SEGURA (no intrusiva) ───────────────────────────
+# Corre siempre al final del despliegue. No modifica nada ni inyecta tráfico.
+
+- name: Confirmar que los servicios están activos
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  loop:
+    - sendguard-agent
+    - sendguard-policyd
+  register: sg_active
+  changed_when: false
+  failed_when: sg_active.stdout != "active"
+
+- name: Consultar versión del agente instalado
+  ansible.builtin.command: "{{ sendguard_bin_dir }}/sendguard-agent -version"
+  register: sg_version
+  changed_when: false
+
+- name: Sondear el endpoint de salud de la API
+  ansible.builtin.uri:
+    url: "http://{{ sendguard_api_listen }}/health"
+    method: GET
+    status_code: 200
+    timeout: 5
+  register: sg_health
+  retries: 5
+  delay: 2
+  until: sg_health.status is defined and sg_health.status == 200
+
+- name: Resumen de verificación
+  ansible.builtin.debug:
+    msg:
+      - "agent y policyd: activos"
+      - "versión: {{ sg_version.stdout }}"
+      - "API /health: HTTP {{ sg_health.status }}"
+      - "firewall: {{ sendguard_firewall_backend }} · geoip_db: {{ 'local' if sendguard_geoip_db_path | length > 0 else 'API fallback' }}"

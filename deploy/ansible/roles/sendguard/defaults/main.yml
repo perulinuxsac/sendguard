@@ -13,6 +13,8 @@ sendguard_client_name: ""          # OBLIGATORIO: nombre del cliente
 # Ejecuta `make package` (o build/build-ctl/build-policyd) en la raíz del repo
 # antes de desplegar; los binarios quedan en dist/ y el rol los copia desde ahí.
 sendguard_dist_dir: "{{ playbook_dir }}/../../dist"
+# Script del self-test intrusivo (solo se usa con --tags selftest).
+sendguard_selftest_script: "{{ playbook_dir }}/../test_sendguard.sh"
 sendguard_bin_dir: "/usr/local/bin"
 sendguard_config_dir: "/etc/sendguard"
 sendguard_db_dir: "/var/lib/sendguard"
