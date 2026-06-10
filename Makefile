@@ -15,7 +15,12 @@ LDFLAGS := -s -w \
 # Binario Linux amd64 estático (para deploy en servidores Zimbra)
 GOFLAGS := CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 
-.PHONY: all build build-ctl build-policyd package test lint vet clean install install-ctl help
+# Empaquetado .deb/.rpm con nfpm. PKG_VERSION quita la 'v' de v1.0.4 (deb/rpm
+# no aceptan prefijo en la versión).
+NFPM        ?= nfpm
+PKG_VERSION := $(patsubst v%,%,$(VERSION))
+
+.PHONY: all build build-ctl build-policyd package deb rpm packages test lint vet clean install install-ctl help
 
 all: build build-ctl build-policyd
 
@@ -64,6 +69,23 @@ package: build build-ctl build-policyd
 	@echo "Copiar al cliente:  scp $(BUILD_DIR)/sendguard-$(VERSION).tar.gz root@IP:/tmp/"
 	@echo "Instalar:           tar xzf sendguard-$(VERSION).tar.gz && bash install.sh"
 	@echo "Desinstalar:        bash uninstall.sh"
+
+## deb: genera el paquete .deb en dist/ (requiere nfpm)
+deb: build build-ctl build-policyd
+	@command -v $(NFPM) >/dev/null 2>&1 || { echo "nfpm no instalado. Instala con: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"; exit 1; }
+	@mkdir -p $(BUILD_DIR)
+	VERSION=$(PKG_VERSION) $(NFPM) package -f deploy/nfpm.yaml -p deb -t $(BUILD_DIR)
+	@echo "Paquete .deb generado en $(BUILD_DIR)/"
+
+## rpm: genera el paquete .rpm en dist/ (requiere nfpm)
+rpm: build build-ctl build-policyd
+	@command -v $(NFPM) >/dev/null 2>&1 || { echo "nfpm no instalado. Instala con: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"; exit 1; }
+	@mkdir -p $(BUILD_DIR)
+	VERSION=$(PKG_VERSION) $(NFPM) package -f deploy/nfpm.yaml -p rpm -t $(BUILD_DIR)
+	@echo "Paquete .rpm generado en $(BUILD_DIR)/"
+
+## packages: genera .deb y .rpm
+packages: deb rpm
 
 ## clean: elimina binarios y artefactos generados
 clean:

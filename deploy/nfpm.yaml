@@ -1,0 +1,78 @@
+# SendGuard — definición de paquetes .deb y .rpm (nfpm)
+# https://nfpm.goreleaser.com/
+#
+# Genera ambos paquetes desde esta única definición:
+#   make deb        → dist/sendguard_<ver>_amd64.deb
+#   make rpm        → dist/sendguard-<ver>.x86_64.rpm
+#   make packages   → ambos
+#
+# Requiere los binarios ya compilados en dist/ (los targets del Makefile
+# los construyen antes de invocar nfpm). VERSION se inyecta por entorno.
+name: "sendguard"
+arch: "amd64"
+platform: "linux"
+version: "${VERSION}"
+section: "admin"
+priority: "optional"
+maintainer: "PeruLinux <soporte@perulinux.pe>"
+description: |
+  SendGuard — protección SMTP/IMAP para servidores de correo Zimbra.
+  Detección de abuso (brute force, password spray, account takeover,
+  impossible traveler, colas, rebotes) con bloqueo de IPs vía firewall
+  e integración Postfix policy daemon.
+vendor: "PeruLinux"
+homepage: "https://github.com/perulinux/sendguard"
+license: "Proprietary"
+
+# El paquete instala el software; la configuración por cliente (agent.yaml)
+# la genera Ansible o install.sh. El paquete nunca pisa una config existente.
+contents:
+  # ── Binarios ───────────────────────────────────────────────────────────────
+  # Rutas relativas a la raíz del repo (donde el Makefile invoca nfpm).
+  - src: dist/sendguard-agent
+    dst: /usr/local/bin/sendguard-agent
+    file_info: { mode: 0755 }
+  - src: dist/sendguard-ctl
+    dst: /usr/local/bin/sendguard-ctl
+    file_info: { mode: 0755 }
+  - src: dist/sendguard-policyd
+    dst: /usr/local/bin/sendguard-policyd
+    file_info: { mode: 0755 }
+
+  # ── Units systemd ────────────────────────────────────────────────────────────
+  - src: deploy/sendguard-agent.service
+    dst: /etc/systemd/system/sendguard-agent.service
+    file_info: { mode: 0644 }
+  - src: deploy/sendguard-policyd.service
+    dst: /etc/systemd/system/sendguard-policyd.service
+    file_info: { mode: 0644 }
+
+  # ── Directorios de estado/config (creados con permisos restrictivos) ─────────
+  - dst: /etc/sendguard
+    type: dir
+    file_info: { mode: 0750 }
+  - dst: /var/lib/sendguard
+    type: dir
+    file_info: { mode: 0750 }
+
+  # ── Config de ejemplo (referencia; NO es la config activa) ───────────────────
+  # Se entrega como .example para no colisionar con /etc/sendguard/agent.yaml,
+  # que crea Ansible/install.sh. En upgrades este ejemplo sí se actualiza.
+  - src: agent.yaml
+    dst: /etc/sendguard/agent.yaml.example
+    file_info: { mode: 0640 }
+
+scripts:
+  postinstall: deploy/scripts/postinstall.sh
+  preremove: deploy/scripts/preremove.sh
+  postremove: deploy/scripts/postremove.sh
+
+# Recomendaciones de dependencias de runtime (no bloqueantes):
+# systemd siempre; el firewall (ufw/firewalld) se valida en install/Ansible.
+overrides:
+  deb:
+    depends:
+      - systemd
+  rpm:
+    depends:
+      - systemd
