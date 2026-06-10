@@ -103,8 +103,10 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("DELETE /blocked/{ip}", s.requireKey(s.handleUnblock))
 	mux.HandleFunc("POST /blocked/{ip}", s.requireKey(s.handleBlock))
 	mux.HandleFunc("DELETE /suspended/{account}", s.requireKey(s.handleUnsuspend))
-	mux.HandleFunc("POST /whitelist/{value}", s.requireKey(s.handleWhitelistAdd))
-	mux.HandleFunc("DELETE /whitelist/{value}", s.requireKey(s.handleWhitelistRemove))
+	// {value...} (wildcard multi-segmento) para aceptar CIDRs, que contienen "/":
+	// con {value} a secas, POST /whitelist/10.0.0.0/8 no matchearía (404).
+	mux.HandleFunc("POST /whitelist/{value...}", s.requireKey(s.handleWhitelistAdd))
+	mux.HandleFunc("DELETE /whitelist/{value...}", s.requireKey(s.handleWhitelistRemove))
 
 	s.srv = &http.Server{
 		Addr:         addr,
@@ -440,6 +442,10 @@ func (s *Server) handleWhitelistAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value := r.PathValue("value")
+	if value == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "se requiere IP/CIDR o cuenta"})
+		return
+	}
 	if isIPOrCIDR(value) {
 		if err := s.deps.Whitelist.AddIP(value); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -460,6 +466,10 @@ func (s *Server) handleWhitelistRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value := r.PathValue("value")
+	if value == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "se requiere IP/CIDR o cuenta"})
+		return
+	}
 	if isIPOrCIDR(value) {
 		s.deps.Whitelist.RemoveIP(value)
 		writeJSON(w, http.StatusOK, map[string]string{"removed_ip": value})

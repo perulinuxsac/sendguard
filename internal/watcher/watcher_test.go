@@ -1,6 +1,7 @@
 package watcher
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -197,6 +198,48 @@ func TestDrainLinesParseFnRechaza(t *testing.T) {
 
 	if len(ch) != 0 {
 		t.Errorf("parseFn que rechaza: got %d eventos, want 0", len(ch))
+	}
+}
+
+// --- resumeFromStart ---
+
+func TestTailResumeFromStartLeeContenidoExistente(t *testing.T) {
+	// Regresión: tras una rotación, tail siempre hacía Seek(End) al reabrir y
+	// las líneas escritas en el archivo nuevo antes de la reapertura se perdían.
+	// Con resumeFromStart activo debe leer el archivo desde el inicio.
+	f := newTempFile(t, "linea previa\n")
+	f.Close()
+
+	ch := make(chan event.Event, 10)
+	w := New(f.Name(), stubParse, "", ch)
+	w.resumeFromStart = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- w.tail(ctx) }()
+
+	select {
+	case ev := <-ch:
+		if ev.Raw != "linea previa" {
+			t.Errorf("Raw: got %q, want \"linea previa\"", ev.Raw)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout: tail con resumeFromStart no leyó el contenido existente")
+	}
+
+	if w.resumeFromStart {
+		t.Error("resumeFromStart debe resetearse tras la apertura")
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("tail: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("tail no terminó tras cancelar ctx")
 	}
 }
 

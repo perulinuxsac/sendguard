@@ -129,6 +129,22 @@ func TestHandleRateLimitSinPostfix(t *testing.T) {
 	}
 }
 
+func TestHandleRateLimitSinPostfixRegistraAudit(t *testing.T) {
+	// Regresión: la config faltante hacía `return` y la alerta no quedaba en el
+	// audit log ni en el forwarder, a diferencia de los fallos de block/suspend.
+	var buf bytes.Buffer
+	e := New(Config{AuditLog: audit.NewWithWriter(&buf)})
+
+	e.handle(context.Background(), detection.Alert{
+		Module: "test", Action: detection.ActionRateLimit,
+		Account: "user@domain.com", Timestamp: time.Now(),
+	})
+
+	if buf.Len() == 0 {
+		t.Error("rate_limit sin postfix configurado debe registrarse en el audit log")
+	}
+}
+
 // ── handle — ActionPurgeQueue early returns ──────────────────────────────────
 
 func TestHandlePurgeQueueSinDominio(t *testing.T) {

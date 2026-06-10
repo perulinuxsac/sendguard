@@ -73,6 +73,38 @@ func TestNotifyEnviaPost(t *testing.T) {
 	}
 }
 
+func TestFormatoEscapaHTML(t *testing.T) {
+	// Regresión: los campos provenientes de los logs (cuenta, reasons…) van dentro
+	// de parse_mode=HTML. Sin escapar, un "<" controlado por el atacante hace que
+	// la Bot API rechace el mensaje completo y la notificación se pierda.
+	srv, _, bodyPtr := okServer(t)
+	cfg := telegram.Config{Token: "tok", ChatID: "1"}
+	n := telegram.NewForTest(cfg, srv.URL)
+
+	alert := sampleAlert()
+	alert.Account = "<script>user@example.com"
+	alert.Reasons = []string{"intento con payload <b>raro</b>"}
+
+	if err := n.Notify(context.Background(), alert); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(*bodyPtr, &payload); err != nil {
+		t.Fatalf("body no es JSON válido: %v", err)
+	}
+	text := payload["text"]
+	if strings.Contains(text, "<script>") {
+		t.Error("la cuenta debe ir escapada: text contiene \"<script>\" sin escapar")
+	}
+	if !strings.Contains(text, "&lt;script&gt;user@example.com") {
+		t.Errorf("text debe contener la cuenta escapada: %q", text)
+	}
+	if strings.Contains(text, "<b>raro</b>") {
+		t.Error("las reasons deben ir escapadas: text contiene \"<b>raro</b>\" sin escapar")
+	}
+}
+
 func TestNotifyURLContienePath(t *testing.T) {
 	var capturedPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

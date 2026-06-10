@@ -578,6 +578,55 @@ func TestWhitelistRemoveAccount(t *testing.T) {
 	}
 }
 
+func TestWhitelistAddCIDR(t *testing.T) {
+	// Regresión: la ruta usaba {value} (un solo segmento) y un CIDR con "/"
+	// devolvía 404. Con {value...} el path completo llega al handler.
+	wl := &mockWhitelist{}
+	srv := newFullTestServer(&mockEnforcer{}, &mockEngine{}, func(d *api.Dependencies) {
+		d.Whitelist = wl
+	})
+	rr := do(t, srv, http.MethodPost, "/whitelist/10.0.0.0/8")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("add CIDR: got %d, want 200", rr.Code)
+	}
+	var body map[string]string
+	json.NewDecoder(rr.Body).Decode(&body)
+	if body["added_ip"] != "10.0.0.0/8" {
+		t.Errorf("added_ip: got %q, want \"10.0.0.0/8\"", body["added_ip"])
+	}
+}
+
+func TestWhitelistRemoveCIDR(t *testing.T) {
+	wl := &mockWhitelist{ips: []string{"10.0.0.0/8"}}
+	srv := newFullTestServer(&mockEnforcer{}, &mockEngine{}, func(d *api.Dependencies) {
+		d.Whitelist = wl
+	})
+	rr := do(t, srv, http.MethodDelete, "/whitelist/10.0.0.0/8")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("remove CIDR: got %d, want 200", rr.Code)
+	}
+	var body map[string]string
+	json.NewDecoder(rr.Body).Decode(&body)
+	if body["removed_ip"] != "10.0.0.0/8" {
+		t.Errorf("removed_ip: got %q, want \"10.0.0.0/8\"", body["removed_ip"])
+	}
+}
+
+func TestWhitelistAddValorVacio(t *testing.T) {
+	// Con {value...} la ruta /whitelist/ matchea con valor vacío — debe ser 400.
+	wl := &mockWhitelist{}
+	srv := newFullTestServer(&mockEnforcer{}, &mockEngine{}, func(d *api.Dependencies) {
+		d.Whitelist = wl
+	})
+	rr := do(t, srv, http.MethodPost, "/whitelist/")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("add vacío: got %d, want 400", rr.Code)
+	}
+	if len(wl.accounts) != 0 {
+		t.Errorf("no debe agregarse una cuenta vacía: %v", wl.accounts)
+	}
+}
+
 func TestWhitelistAddSinWhitelist(t *testing.T) {
 	srv := newTestServer(&mockEnforcer{}, &mockEngine{})
 	rr := do(t, srv, http.MethodPost, "/whitelist/1.2.3.4")

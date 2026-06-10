@@ -71,7 +71,9 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("store: crear directorio %s: %w", filepath.Dir(path), err)
 	}
 
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on", path)
+	// Sintaxis _pragma=… del driver modernc.org/sqlite. La forma estilo mattn
+	// (_journal_mode=WAL&_busy_timeout=5000) es ignorada en silencio por este driver.
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: abrir %s: %w", path, err)

@@ -217,8 +217,11 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 			break
 		}
 		if e.cfg.PostfixSbin == "" || e.cfg.PostfixConf == "" {
-			slog.Warn("enforcement: rate_limit sin postfix_sbin/postfix_conf configurados, ignorando")
-			return
+			// break (no return): la alerta sigue registrándose en Forwarder/AuditLog,
+			// igual que los fallos de block/suspend.
+			slog.Warn("enforcement: rate_limit sin postfix_sbin/postfix_conf configurados, omitiendo")
+			alert.Reasons = append(alert.Reasons, "⚠ rate-limit omitido: postfix_sbin/postfix_conf sin configurar")
+			break
 		}
 		if err := rateLimit(ctx, alert.Account, e.cfg.BanSeconds, e.cfg.PostfixSbin, e.cfg.PostfixConf); err != nil {
 			slog.Error("enforcement: fallo al aplicar rate-limit",
@@ -237,8 +240,9 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 			return
 		}
 		if e.cfg.PostfixSbin == "" || e.cfg.PostfixConf == "" {
-			slog.Warn("enforcement: purge_queue sin postfix_sbin/postfix_conf configurados, ignorando")
-			return
+			slog.Warn("enforcement: purge_queue sin postfix_sbin/postfix_conf configurados, omitiendo")
+			alert.Reasons = append(alert.Reasons, "⚠ purga de cola omitida: postfix_sbin/postfix_conf sin configurar")
+			break
 		}
 		n, err := purgeQueueDomain(ctx, domain, e.cfg.PostfixSbin, e.cfg.PostfixConf)
 		if err != nil {

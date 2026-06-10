@@ -31,6 +31,12 @@ type Watcher struct {
 	parseFn func(string) (event.Event, bool) // función de parseo inyectada
 	server  string                           // si no vacío, rellena ev.Server cuando el parser no lo hace
 	eventCh chan<- event.Event
+
+	// resumeFromStart: la próxima apertura lee desde el inicio del archivo en vez
+	// de posicionarse al final. Se activa al detectar una rotación: el archivo
+	// nuevo arranca vacío, así que leerlo completo no duplica nada y evita perder
+	// las líneas escritas entre la creación del archivo y la reapertura.
+	resumeFromStart bool
 }
 
 // New crea un Watcher para el archivo en path.
@@ -83,7 +89,11 @@ func (w *Watcher) tail(ctx context.Context) error {
 	}
 	defer f.Close()
 
-	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+	if w.resumeFromStart {
+		// Reapertura tras rotación: leer desde el inicio para no perder las
+		// líneas escritas en el archivo nuevo antes de llegar aquí.
+		w.resumeFromStart = false
+	} else if _, err := f.Seek(0, io.SeekEnd); err != nil {
 		return fmt.Errorf("seek %s: %w", w.path, err)
 	}
 
@@ -123,12 +133,14 @@ func (w *Watcher) tail(ctx context.Context) error {
 					slog.Info("watcher: archivo rotado, esperando nuevo archivo", "path", w.path)
 					w.drainLines(f)
 					w.waitForNewFile(ctx, w.path)
+					w.resumeFromStart = true
 					return nil
 				}
 
 			case fsEv.Has(fsnotify.Create):
 				if filepath.Clean(fsEv.Name) == filepath.Clean(w.path) {
 					slog.Info("watcher: nuevo archivo detectado", "path", w.path)
+					w.resumeFromStart = true
 					return nil
 				}
 			}

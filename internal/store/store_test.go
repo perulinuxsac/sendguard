@@ -18,6 +18,42 @@ func openMemory(t *testing.T) *Store {
 	return s
 }
 
+// TestOpenAplicaPragmas verifica que el DSN realmente activa WAL y busy_timeout.
+// Regresión: la sintaxis estilo mattn (_journal_mode=WAL) era ignorada en silencio
+// por modernc.org/sqlite y producción corría con journal_mode=delete y busy_timeout=0.
+func TestOpenAplicaPragmas(t *testing.T) {
+	path := t.TempDir() + "/pragmas.db"
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	var mode string
+	if err := s.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("PRAGMA journal_mode: %v", err)
+	}
+	if mode != "wal" {
+		t.Errorf("journal_mode: got %q, want \"wal\"", mode)
+	}
+
+	var busy int
+	if err := s.db.QueryRow("PRAGMA busy_timeout").Scan(&busy); err != nil {
+		t.Fatalf("PRAGMA busy_timeout: %v", err)
+	}
+	if busy != 5000 {
+		t.Errorf("busy_timeout: got %d, want 5000", busy)
+	}
+
+	var fk int
+	if err := s.db.QueryRow("PRAGMA foreign_keys").Scan(&fk); err != nil {
+		t.Fatalf("PRAGMA foreign_keys: %v", err)
+	}
+	if fk != 1 {
+		t.Errorf("foreign_keys: got %d, want 1", fk)
+	}
+}
+
 // ── Bans ─────────────────────────────────────────────────────────────────────
 
 func TestSaveAndLoadBan(t *testing.T) {

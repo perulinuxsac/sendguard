@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -142,33 +143,36 @@ func moduleNotifyLabel(module string) string {
 }
 
 // formatAlert construye el texto HTML del mensaje de Telegram.
+// Los campos que provienen de los logs (cuenta, servidor, razones…) se escapan:
+// con parse_mode=HTML un "<" sin escapar hace que la Bot API rechace el mensaje
+// completo ("can't parse entities") y la notificación se perdería.
 func formatAlert(alert detection.Alert) string {
 	var sb strings.Builder
 
 	// Cabecera: escudo + severidad en la primera línea para lectura rápida en móvil
 	fmt.Fprintf(&sb, "🛡 <b>SendGuard</b>  %s\n", severityEmoji(alert.Severity))
-	fmt.Fprintf(&sb, "<b>%s</b>  ·  <i>%s</i>\n", actionLabel(alert.Action, alert.Module), alert.Module)
+	fmt.Fprintf(&sb, "<b>%s</b>  ·  <i>%s</i>\n", actionLabel(alert.Action, alert.Module), html.EscapeString(alert.Module))
 	sb.WriteString("─────────────────────\n")
 
 	if alert.Server != "" {
-		fmt.Fprintf(&sb, "🖥 Servidor: <code>%s</code>\n", alert.Server)
+		fmt.Fprintf(&sb, "🖥 Servidor: <code>%s</code>\n", html.EscapeString(alert.Server))
 	}
 	if alert.IP != "" {
-		fmt.Fprintf(&sb, "🌐 IP: <code>%s</code>\n", alert.IP)
+		fmt.Fprintf(&sb, "🌐 IP: <code>%s</code>\n", html.EscapeString(alert.IP))
 	}
 	if alert.Country != "" {
-		fmt.Fprintf(&sb, "🏳 País: <code>%s</code>\n", alert.Country)
+		fmt.Fprintf(&sb, "🏳 País: <code>%s</code>\n", html.EscapeString(alert.Country))
 	}
 	if alert.Account != "" {
-		fmt.Fprintf(&sb, "👤 Cuenta: <code>%s</code>\n", alert.Account)
+		fmt.Fprintf(&sb, "👤 Cuenta: <code>%s</code>\n", html.EscapeString(alert.Account))
 	}
 	if alert.Domain != "" {
-		fmt.Fprintf(&sb, "📧 Dominio: <code>%s</code>\n", alert.Domain)
+		fmt.Fprintf(&sb, "📧 Dominio: <code>%s</code>\n", html.EscapeString(alert.Domain))
 	}
 	fmt.Fprintf(&sb, "📊 Score: <b>%d</b>/100\n", alert.Score)
 
 	if len(alert.Reasons) > 0 {
-		fmt.Fprintf(&sb, "\n📋 <i>%s</i>", strings.Join(alert.Reasons, "; "))
+		fmt.Fprintf(&sb, "\n📋 <i>%s</i>", html.EscapeString(strings.Join(alert.Reasons, "; ")))
 	}
 
 	ts := alert.Timestamp

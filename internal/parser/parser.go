@@ -471,14 +471,21 @@ func parseMailboxTimestamp(s string) time.Time {
 // parseTimestamp soporta los formatos de /var/log/mail.log:
 //
 //	Syslog clásico: "May 11 10:23:45"  (sin año → se asume el año actual)
-//	ISO 8601:       "2024-05-11T10:23:45.123+00:00"
+//	ISO 8601:       "2024-05-11T10:23:45.123+00:00" (con o sin zona/fracción)
+//
+// Go acepta una fracción de segundo en el input aunque el layout no la incluya,
+// así que no hacen falta variantes ".999…" de cada layout. Los timestamps sin
+// zona explícita se interpretan en hora local, igual que el syslog clásico y
+// que mailbox.log.
 func parseTimestamp(s string) time.Time {
+	if t, err := time.Parse("2006-01-02T15:04:05Z07:00", s); err == nil {
+		return t
+	}
 	for _, layout := range []string{
-		"2006-01-02T15:04:05.999999999Z07:00",
-		"2006-01-02T15:04:05Z07:00",
+		"2006-01-02T15:04:05",
 		"2006-01-02 15:04:05",
 	} {
-		if t, err := time.Parse(layout, s); err == nil {
+		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
 			return t
 		}
 	}
