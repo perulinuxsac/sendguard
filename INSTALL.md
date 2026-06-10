@@ -4,13 +4,14 @@
 
 1. [Prerequisites](#prerequisites)
 2. [Build from Source](#build-from-source)
-3. [Quick Install (recommended)](#quick-install-recommended)
-4. [Manual Installation](#manual-installation)
-5. [Configuration Reference](#configuration-reference)
-6. [Post-Install Verification](#post-install-verification)
-7. [Upgrading](#upgrading)
-8. [Uninstalling](#uninstalling)
-9. [Troubleshooting](#troubleshooting)
+3. [Package Install (.deb / .rpm)](#package-install-deb--rpm)
+4. [Quick Install (recommended)](#quick-install-recommended)
+5. [Manual Installation](#manual-installation)
+6. [Configuration Reference](#configuration-reference)
+7. [Post-Install Verification](#post-install-verification)
+8. [Upgrading](#upgrading)
+9. [Uninstalling](#uninstalling)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -59,6 +60,80 @@ The binaries are statically linked (`CGO_ENABLED=0`), targeting `GOOS=linux GOAR
 ```bash
 scp dist/sendguard-*.tar.gz root@your-mailserver:/tmp/
 ```
+
+To build native OS packages instead of the tarball, see [Package Install (.deb / .rpm)](#package-install-deb--rpm).
+
+---
+
+## Package Install (.deb / .rpm)
+
+For fleets it is cleaner to ship a native `.deb` (Debian/Ubuntu) or `.rpm`
+(RHEL/Rocky/AlmaLinux) than the tarball + `install.sh`. The package installs the
+software (binaries, systemd units, directories); the **per-client configuration**
+(`/etc/sendguard/agent.yaml`) is still produced by Ansible or `install.sh` — the
+package ships only `agent.yaml.example` and never overwrites an existing config.
+
+### Build the packages
+
+On the **build host** (requires Go 1.22+ and [`nfpm`](https://nfpm.goreleaser.com/)):
+
+```bash
+# Install nfpm once (single binary, no rpmbuild/dpkg toolchain needed)
+go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+export PATH="$PATH:$(go env GOPATH)/bin"
+
+# Build from a clean tag so the version has no -dirty/-gNNN suffix
+git tag v1.0.5        # if not already tagged
+make packages         # → both .deb and .rpm
+# or individually: make deb / make rpm
+# or override the version: make packages VERSION=1.0.5
+```
+
+Output in `dist/`:
+
+```
+sendguard_1.0.5_amd64.deb
+sendguard-1.0.5-1.x86_64.rpm
+```
+
+### What the package contains
+
+| Path | Mode | Notes |
+|---|---|---|
+| `/usr/local/bin/sendguard-{agent,ctl,policyd}` | 0755 | static binaries |
+| `/etc/systemd/system/sendguard-{agent,policyd}.service` | 0644 | systemd units |
+| `/etc/sendguard/` | 0750 | config dir |
+| `/etc/sendguard/agent.yaml.example` | 0640 | reference config (not the active one) |
+| `/var/lib/sendguard/` | 0750 | SQLite DB dir |
+
+The maintainer scripts run `systemctl daemon-reload`, enable both services, and:
+
+- **Fresh install** — services are enabled but **not started** (no config yet).
+  The post-install prints the next steps.
+- **Upgrade** — if `/etc/sendguard/agent.yaml` already exists, both services are
+  restarted with the new binaries.
+- **Removal** — services are stopped and disabled only on a real uninstall
+  (not during an upgrade). `/etc/sendguard` and `/var/lib/sendguard` (config and
+  database) are **preserved**.
+
+### Install on the Zimbra server
+
+```bash
+# Debian / Ubuntu
+apt install ./sendguard_1.0.5_amd64.deb
+
+# RHEL / Rocky / AlmaLinux
+dnf install ./sendguard-1.0.5-1.x86_64.rpm
+
+# Then configure and start:
+cp /etc/sendguard/agent.yaml.example /etc/sendguard/agent.yaml   # or deploy via Ansible
+$EDITOR /etc/sendguard/agent.yaml                                # set server_id, client_name, ...
+systemctl enable --now sendguard-agent sendguard-policyd
+```
+
+Upgrading later is just `apt install ./sendguard_<newver>_amd64.deb` /
+`dnf upgrade ./sendguard-<newver>.x86_64.rpm`; the existing config and database
+are kept and the services restart automatically.
 
 ---
 
@@ -335,6 +410,19 @@ Configuration and the SQLite database at `/var/lib/sendguard/sendguard.db` are p
 ---
 
 ## Uninstalling
+
+If installed from a **package**, use the package manager (config and database in
+`/etc/sendguard` and `/var/lib/sendguard` are preserved):
+
+```bash
+apt remove sendguard      # Debian/Ubuntu  — or `apt purge` to also drop config
+dnf remove sendguard      # RHEL/Rocky/AlmaLinux
+
+# To remove the preserved config and database as well:
+rm -rf /etc/sendguard /var/lib/sendguard
+```
+
+If installed from the **tarball/`install.sh`** (manual):
 
 ```bash
 systemctl stop sendguard-agent
