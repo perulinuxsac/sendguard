@@ -43,6 +43,12 @@ CREATE TABLE IF NOT EXISTS pending_events (
 
 CREATE INDEX IF NOT EXISTS idx_pending_events_synced ON pending_events (synced, id);
 CREATE INDEX IF NOT EXISTS idx_pending_events_prune  ON pending_events (synced, created_at);
+
+CREATE TABLE IF NOT EXISTS whitelist (
+    value      TEXT    PRIMARY KEY,
+    kind       TEXT    NOT NULL CHECK (kind IN ('ip', 'account')),
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
 `
 
 // BanRecord describe un ban activo cargado desde la base de datos.
@@ -157,6 +163,58 @@ func (s *Store) PruneExpiredBans() (int64, error) {
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
+}
+
+// ── Whitelist persistente ────────────────────────────────────────────────────
+// Guarda las entradas agregadas en caliente vía API/ctl para que sobrevivan
+// reinicios y redeploys (el agent.yaml se regenera en cada despliegue de Ansible,
+// pero la base local en /var/lib/sendguard no se toca).
+
+// WhitelistEntry es una entrada de whitelist persistida (kind: "ip" o "account").
+type WhitelistEntry struct {
+	Value string
+	Kind  string
+}
+
+// SaveWhitelistEntry persiste una entrada de whitelist agregada en caliente.
+func (s *Store) SaveWhitelistEntry(value, kind string) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO whitelist (value, kind, created_at) VALUES (?, ?, unixepoch())`,
+		value, kind,
+	)
+	if err != nil {
+		return fmt.Errorf("store: SaveWhitelistEntry %s: %w", value, err)
+	}
+	return nil
+}
+
+// DeleteWhitelistEntry elimina una entrada de whitelist persistida.
+func (s *Store) DeleteWhitelistEntry(value string) error {
+	_, err := s.db.Exec(`DELETE FROM whitelist WHERE value = ?`, value)
+	if err != nil {
+		return fmt.Errorf("store: DeleteWhitelistEntry %s: %w", value, err)
+	}
+	return nil
+}
+
+// LoadWhitelist retorna todas las entradas de whitelist persistidas.
+// Se llama al arrancar el agente para restaurarlas en memoria.
+func (s *Store) LoadWhitelist() ([]WhitelistEntry, error) {
+	rows, err := s.db.Query(`SELECT value, kind FROM whitelist ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("store: LoadWhitelist: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []WhitelistEntry
+	for rows.Next() {
+		var e WhitelistEntry
+		if err := rows.Scan(&e.Value, &e.Kind); err != nil {
+			return nil, fmt.Errorf("store: scan whitelist entry: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
 }
 
 // ── StoreAndForward (preparado para Fase 3 — Controller) ─────────────────────

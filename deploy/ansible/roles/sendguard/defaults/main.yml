@@ -25,6 +25,10 @@ sendguard_allowed_countries:
   - "US"
 
 # ── Whitelist (normalmente por host) ─────────────────────────────────────────
+# Las redes privadas (10/8, 172.16/12, 192.168/16), loopback y link-local van
+# embebidas en el binario y están SIEMPRE exentas: no hace falta listarlas aquí.
+# Las entradas agregadas en caliente (sendguard-ctl whitelist add) se persisten
+# en /var/lib/sendguard y sobreviven redeploys; aquí solo va la base por host.
 sendguard_whitelist_ips: []        # CIDRs de oficina, ej: ["190.x.y.0/24"]
 sendguard_whitelist_accounts: []   # cuentas exentas, ej: ["backup@cliente.pe"]
 

@@ -378,3 +378,61 @@ func TestPruneOldEventsRespetaMaxAge(t *testing.T) {
 		t.Errorf("eventos recientes: esperado 2, got %d", len(pending))
 	}
 }
+
+// ── Whitelist persistente ─────────────────────────────────────────────────────
+
+func TestWhitelistRoundtrip(t *testing.T) {
+	s := openMemory(t)
+
+	if err := s.SaveWhitelistEntry("190.40.10.0/24", "ip"); err != nil {
+		t.Fatalf("SaveWhitelistEntry ip: %v", err)
+	}
+	if err := s.SaveWhitelistEntry("backup@cliente.pe", "account"); err != nil {
+		t.Fatalf("SaveWhitelistEntry account: %v", err)
+	}
+
+	entries, err := s.LoadWhitelist()
+	if err != nil {
+		t.Fatalf("LoadWhitelist: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("LoadWhitelist: got %d entradas, want 2", len(entries))
+	}
+	if entries[0].Value != "190.40.10.0/24" || entries[0].Kind != "ip" {
+		t.Errorf("entrada ip: got %+v", entries[0])
+	}
+	if entries[1].Value != "backup@cliente.pe" || entries[1].Kind != "account" {
+		t.Errorf("entrada account: got %+v", entries[1])
+	}
+}
+
+func TestWhitelistDelete(t *testing.T) {
+	s := openMemory(t)
+
+	if err := s.SaveWhitelistEntry("1.2.3.4/32", "ip"); err != nil {
+		t.Fatalf("SaveWhitelistEntry: %v", err)
+	}
+	if err := s.DeleteWhitelistEntry("1.2.3.4/32"); err != nil {
+		t.Fatalf("DeleteWhitelistEntry: %v", err)
+	}
+	entries, err := s.LoadWhitelist()
+	if err != nil {
+		t.Fatalf("LoadWhitelist: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("tras delete: got %d entradas, want 0", len(entries))
+	}
+}
+
+func TestWhitelistSaveDuplicadoNoFalla(t *testing.T) {
+	s := openMemory(t)
+	for i := 0; i < 2; i++ {
+		if err := s.SaveWhitelistEntry("1.2.3.4/32", "ip"); err != nil {
+			t.Fatalf("SaveWhitelistEntry duplicado: %v", err)
+		}
+	}
+	entries, _ := s.LoadWhitelist()
+	if len(entries) != 1 {
+		t.Errorf("duplicado: got %d entradas, want 1", len(entries))
+	}
+}

@@ -10,12 +10,61 @@ import (
 // --- NewWhitelist / ContainsIP ---
 
 func TestWhitelistIPIndividual(t *testing.T) {
-	wl := NewWhitelist([]string{"192.168.1.10"}, nil)
-	if !wl.ContainsIP("192.168.1.10") {
+	wl := NewWhitelist([]string{"203.0.113.10"}, nil)
+	if !wl.ContainsIP("203.0.113.10") {
 		t.Error("IP exacta debe estar en whitelist")
 	}
-	if wl.ContainsIP("192.168.1.11") {
+	if wl.ContainsIP("203.0.113.11") {
 		t.Error("IP diferente no debe estar en whitelist")
+	}
+}
+
+// --- Redes privadas embebidas (siempre exentas) ---
+
+func TestWhitelistRedesPrivadasEmbebidas(t *testing.T) {
+	wl := NewWhitelist(nil, nil) // sin configurar nada
+	for _, ip := range []string{
+		"127.0.0.1",     // loopback
+		"10.20.30.40",   // RFC 1918
+		"172.16.1.5",    // RFC 1918 (172.16.0.0/12)
+		"172.31.255.1",  // límite superior de 172.16.0.0/12
+		"192.168.1.100", // RFC 1918
+		"169.254.10.1",  // link-local
+		"::1",           // loopback IPv6
+	} {
+		if !wl.ContainsIP(ip) {
+			t.Errorf("ContainsIP(%q): las redes privadas embebidas deben estar siempre en whitelist", ip)
+		}
+	}
+	// IPs públicas no deben verse afectadas.
+	for _, ip := range []string{"8.8.8.8", "172.32.0.1", "190.40.10.5"} {
+		if wl.ContainsIP(ip) {
+			t.Errorf("ContainsIP(%q): IP pública no debe estar en whitelist vacía", ip)
+		}
+	}
+}
+
+func TestWhitelistRedesEmbebidasNoSePuedenEliminar(t *testing.T) {
+	wl := NewWhitelist(nil, nil)
+	wl.RemoveIP("172.16.0.0/12")
+	wl.RemoveIP("10.0.0.0/8")
+	if !wl.ContainsIP("172.16.1.5") || !wl.ContainsIP("10.1.1.1") {
+		t.Error("las redes privadas embebidas no deben poder eliminarse en caliente")
+	}
+}
+
+func TestBuiltinNetsExpuestas(t *testing.T) {
+	nets := BuiltinNets()
+	want := map[string]bool{"10.0.0.0/8": false, "172.16.0.0/12": false, "192.168.0.0/16": false, "127.0.0.0/8": false}
+	for _, n := range nets {
+		if _, ok := want[n]; ok {
+			want[n] = true
+		}
+	}
+	for n, found := range want {
+		if !found {
+			t.Errorf("BuiltinNets(): falta %s", n)
+		}
 	}
 }
 

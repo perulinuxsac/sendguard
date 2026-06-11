@@ -240,6 +240,22 @@ func main() {
 		}
 		defer localStore.Close()
 
+		// Restaurar la whitelist agregada en caliente (ctl/API) en sesiones
+		// anteriores: agent.yaml se regenera en cada redeploy de Ansible, pero
+		// estas entradas viven en /var/lib/sendguard y deben sobrevivir.
+		if entries, err := localStore.LoadWhitelist(); err != nil {
+			slog.Warn("store: no se pudo cargar whitelist persistida", "error", err)
+		} else if len(entries) > 0 {
+			for _, e := range entries {
+				if e.Kind == "account" {
+					wl.AddAccount(e.Value)
+				} else if err := wl.AddIP(e.Value); err != nil {
+					slog.Warn("store: entrada de whitelist persistida inválida, ignorando", "value", e.Value, "error", err)
+				}
+			}
+			slog.Info("store: whitelist persistida restaurada", "count", len(entries))
+		}
+
 		// Prune periódico: eliminar bans expirados cada hora para mantener la DB compacta.
 		go func() {
 			ticker := time.NewTicker(time.Hour)
@@ -342,6 +358,9 @@ func main() {
 		// Evitar el nil interface trap: solo asignar si el cliente existe.
 		if abuseClient != nil {
 			apiDeps.AbuseIPDB = abuseClient
+		}
+		if localStore != nil {
+			apiDeps.WhitelistStore = localStore
 		}
 		go api.New(cfg.API.Listen, apiDeps).Run(ctx)
 	}

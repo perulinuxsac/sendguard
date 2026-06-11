@@ -65,6 +65,12 @@ type Dependencies struct {
 		AddAccount(account string)
 		RemoveAccount(account string)
 	}
+	// WhitelistStore persiste los cambios de whitelist hechos en caliente para
+	// que sobrevivan reinicios y redeploys. nil = solo en memoria.
+	WhitelistStore interface {
+		SaveWhitelistEntry(value, kind string) error
+		DeleteWhitelistEntry(value string) error
+	}
 	AbuseIPDB interface {
 		Check(ctx context.Context, ip string) (abuseipdb.Report, error)
 	}
@@ -429,8 +435,9 @@ func (s *Server) handleWhitelistGet(w http.ResponseWriter, r *http.Request) {
 		accounts = []string{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ips":      ips,
-		"accounts": accounts,
+		"ips":         ips,
+		"accounts":    accounts,
+		"builtin_ips": detection.BuiltinNets(),
 	})
 }
 
@@ -451,9 +458,11 @@ func (s *Server) handleWhitelistAdd(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		s.persistWhitelist(canonicalCIDR(value), "ip")
 		writeJSON(w, http.StatusOK, map[string]string{"added_ip": value})
 	} else {
 		s.deps.Whitelist.AddAccount(value)
+		s.persistWhitelist(value, "account")
 		writeJSON(w, http.StatusOK, map[string]string{"added_account": value})
 	}
 }
@@ -472,11 +481,48 @@ func (s *Server) handleWhitelistRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	if isIPOrCIDR(value) {
 		s.deps.Whitelist.RemoveIP(value)
+		s.unpersistWhitelist(canonicalCIDR(value))
 		writeJSON(w, http.StatusOK, map[string]string{"removed_ip": value})
 	} else {
 		s.deps.Whitelist.RemoveAccount(value)
+		s.unpersistWhitelist(value)
 		writeJSON(w, http.StatusOK, map[string]string{"removed_account": value})
 	}
+}
+
+// persistWhitelist guarda la entrada en SQLite (si hay store) para que sobreviva
+// reinicios y redeploys. Un fallo aquí no aborta la operación en memoria.
+func (s *Server) persistWhitelist(value, kind string) {
+	if s.deps.WhitelistStore == nil {
+		return
+	}
+	if err := s.deps.WhitelistStore.SaveWhitelistEntry(value, kind); err != nil {
+		slog.Warn("api: no se pudo persistir entrada de whitelist", "value", value, "error", err)
+	}
+}
+
+// unpersistWhitelist elimina la entrada de SQLite (si hay store).
+func (s *Server) unpersistWhitelist(value string) {
+	if s.deps.WhitelistStore == nil {
+		return
+	}
+	if err := s.deps.WhitelistStore.DeleteWhitelistEntry(value); err != nil {
+		slog.Warn("api: no se pudo eliminar entrada de whitelist persistida", "value", value, "error", err)
+	}
+}
+
+// canonicalCIDR normaliza una IP/CIDR a la forma con la que la Whitelist la
+// lista internamente ("1.2.3.4" → "1.2.3.4/32"), para que add y remove
+// referencien la misma clave en la tabla persistida.
+func canonicalCIDR(value string) string {
+	raw := value
+	if !strings.ContainsRune(raw, '/') {
+		raw += "/32"
+	}
+	if _, cidr, err := net.ParseCIDR(raw); err == nil {
+		return cidr.String()
+	}
+	return value
 }
 
 // requireKey es un middleware que exige el header X-Api-Key cuando APIKey está configurada.

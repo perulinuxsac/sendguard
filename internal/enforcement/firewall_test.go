@@ -175,3 +175,34 @@ func TestUnbanExpiredNadaExpirado(t *testing.T) {
 		t.Error("sin expirados: no debe modificar el mapa")
 	}
 }
+
+// ── blockIP — guard de IPs privadas/locales ───────────────────────────────────
+
+func TestBlockIPPrivadaOmitida(t *testing.T) {
+	binDir := setupFakeBin(t, "ufw")
+	prependPath(t, binDir)
+
+	e := New(Config{BanSeconds: 3600, FirewallBackend: "ufw"})
+	for _, ip := range []string{"127.0.0.1", "10.1.2.3", "172.16.1.50", "192.168.0.10", "169.254.1.1"} {
+		e.blockIP(context.Background(), detection.Alert{
+			IP: ip, Module: "test", Action: detection.ActionBlockIP, Timestamp: time.Now(),
+		})
+	}
+
+	if e.Stats().BlocksTotal != 0 {
+		t.Errorf("IPs privadas no deben bloquearse: BlocksTotal got %d, want 0", e.Stats().BlocksTotal)
+	}
+	if len(e.BlockedIPs()) != 0 {
+		t.Errorf("IPs privadas no deben registrarse como bloqueadas: %v", e.BlockedIPs())
+	}
+}
+
+func TestBlockManualIPPrivadaRetornaError(t *testing.T) {
+	e := New(Config{BanSeconds: 3600, FirewallBackend: "ufw"})
+	if err := e.Block(context.Background(), "172.16.1.50", 0); err == nil {
+		t.Error("Block manual de IP privada debe retornar error")
+	}
+	if err := e.Block(context.Background(), "192.168.1.1", -1); err == nil {
+		t.Error("Block manual permanente de IP privada debe retornar error")
+	}
+}

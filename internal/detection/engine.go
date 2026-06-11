@@ -23,8 +23,47 @@ type Whitelist struct {
 	accounts map[string]struct{}
 }
 
+// builtinNets son las redes privadas/locales siempre exentas de detección y
+// bloqueo, independientemente de la configuración desplegada. Cubre RFC 1918
+// completo (cada cliente usa rangos internos distintos: 172.16.1.0/24,
+// 10.x, 192.168.x, …), loopback y link-local. No pueden eliminarse en caliente.
+var builtinNets = mustParseCIDRs(
+	"127.0.0.0/8",    // loopback
+	"10.0.0.0/8",     // RFC 1918
+	"172.16.0.0/12",  // RFC 1918
+	"192.168.0.0/16", // RFC 1918
+	"169.254.0.0/16", // link-local
+	"::1/128",        // loopback IPv6
+	"fc00::/7",       // ULA IPv6
+	"fe80::/10",      // link-local IPv6
+)
+
+// mustParseCIDRs parsea CIDRs literales embebidos; un error aquí es un bug de compilación.
+func mustParseCIDRs(cidrs ...string) []*net.IPNet {
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			panic(fmt.Sprintf("whitelist: CIDR embebido inválido %q: %v", c, err))
+		}
+		nets = append(nets, n)
+	}
+	return nets
+}
+
+// BuiltinNets retorna los CIDRs privados/locales embebidos en el binario,
+// siempre activos en toda whitelist.
+func BuiltinNets() []string {
+	out := make([]string, 0, len(builtinNets))
+	for _, n := range builtinNets {
+		out = append(out, n.String())
+	}
+	return out
+}
+
 // NewWhitelist parsea las listas de IPs (individuales o CIDR) y cuentas.
-// Las entradas inválidas se loguean y se ignoran.
+// Las entradas inválidas se loguean y se ignoran. Las redes privadas RFC 1918,
+// loopback y link-local (builtinNets) quedan exentas siempre, sin configurarlas.
 func NewWhitelist(ips []string, accounts []string) *Whitelist {
 	wl := &Whitelist{
 		accounts: make(map[string]struct{}, len(accounts)),
@@ -50,6 +89,11 @@ func (wl *Whitelist) ContainsIP(ip string) bool {
 	parsed := net.ParseIP(ip)
 	if parsed == nil {
 		return false
+	}
+	for _, cidr := range builtinNets {
+		if cidr.Contains(parsed) {
+			return true
+		}
 	}
 	wl.mu.RLock()
 	defer wl.mu.RUnlock()

@@ -642,3 +642,80 @@ func TestWhitelistRemoveSinWhitelist(t *testing.T) {
 		t.Fatalf("sin whitelist: got %d, want 503", rr.Code)
 	}
 }
+
+// ── Whitelist — persistencia en store ─────────────────────────────────────────
+
+type mockWhitelistStore struct {
+	saved   map[string]string // value → kind
+	deleted []string
+}
+
+func (m *mockWhitelistStore) SaveWhitelistEntry(value, kind string) error {
+	if m.saved == nil {
+		m.saved = make(map[string]string)
+	}
+	m.saved[value] = kind
+	return nil
+}
+
+func (m *mockWhitelistStore) DeleteWhitelistEntry(value string) error {
+	m.deleted = append(m.deleted, value)
+	return nil
+}
+
+func TestWhitelistAddPersisteEnStore(t *testing.T) {
+	wl := &mockWhitelist{}
+	st := &mockWhitelistStore{}
+	srv := newFullTestServer(&mockEnforcer{}, &mockEngine{}, func(d *api.Dependencies) {
+		d.Whitelist = wl
+		d.WhitelistStore = st
+	})
+
+	// IP suelta: se persiste en forma canónica /32 para que remove la encuentre.
+	if rr := do(t, srv, http.MethodPost, "/whitelist/1.2.3.4"); rr.Code != http.StatusOK {
+		t.Fatalf("add IP: got %d, want 200", rr.Code)
+	}
+	if kind := st.saved["1.2.3.4/32"]; kind != "ip" {
+		t.Errorf("IP no persistida en forma canónica: saved=%v", st.saved)
+	}
+
+	if rr := do(t, srv, http.MethodPost, "/whitelist/10.7.0.0/16"); rr.Code != http.StatusOK {
+		t.Fatalf("add CIDR: got %d, want 200", rr.Code)
+	}
+	if kind := st.saved["10.7.0.0/16"]; kind != "ip" {
+		t.Errorf("CIDR no persistido: saved=%v", st.saved)
+	}
+
+	if rr := do(t, srv, http.MethodPost, "/whitelist/backup@cliente.pe"); rr.Code != http.StatusOK {
+		t.Fatalf("add account: got %d, want 200", rr.Code)
+	}
+	if kind := st.saved["backup@cliente.pe"]; kind != "account" {
+		t.Errorf("cuenta no persistida: saved=%v", st.saved)
+	}
+}
+
+func TestWhitelistRemoveEliminaDelStore(t *testing.T) {
+	wl := &mockWhitelist{ips: []string{"1.2.3.4/32"}}
+	st := &mockWhitelistStore{}
+	srv := newFullTestServer(&mockEnforcer{}, &mockEngine{}, func(d *api.Dependencies) {
+		d.Whitelist = wl
+		d.WhitelistStore = st
+	})
+
+	if rr := do(t, srv, http.MethodDelete, "/whitelist/1.2.3.4"); rr.Code != http.StatusOK {
+		t.Fatalf("remove IP: got %d, want 200", rr.Code)
+	}
+	if len(st.deleted) != 1 || st.deleted[0] != "1.2.3.4/32" {
+		t.Errorf("delete no usó la forma canónica: deleted=%v", st.deleted)
+	}
+}
+
+func TestWhitelistAddSinStoreNoFalla(t *testing.T) {
+	wl := &mockWhitelist{}
+	srv := newFullTestServer(&mockEnforcer{}, &mockEngine{}, func(d *api.Dependencies) {
+		d.Whitelist = wl // WhitelistStore nil: solo en memoria
+	})
+	if rr := do(t, srv, http.MethodPost, "/whitelist/1.2.3.4"); rr.Code != http.StatusOK {
+		t.Fatalf("add sin store: got %d, want 200", rr.Code)
+	}
+}

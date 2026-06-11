@@ -17,8 +17,8 @@
 //	queue                         — muestra la cola de correo Postfix actual
 //	domains                       — dominios con alertas desde que arrancó el agente
 //	whitelist list                — muestra la whitelist actual
-//	whitelist add    <ip|cuenta>  — agrega IP/CIDR o cuenta a la whitelist (en memoria)
-//	whitelist remove <ip|cuenta>  — elimina IP/CIDR o cuenta de la whitelist (en memoria)
+//	whitelist add    <ip|cuenta>  — agrega IP/CIDR o cuenta a la whitelist (persistente)
+//	whitelist remove <ip|cuenta>  — elimina IP/CIDR o cuenta de la whitelist (persistente)
 package main
 
 import (
@@ -51,8 +51,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  queue                       cola de correo Postfix actual\n")
 		fmt.Fprintf(os.Stderr, "  domains                     dominios con alertas acumuladas\n")
 		fmt.Fprintf(os.Stderr, "  whitelist list              muestra la whitelist actual\n")
-		fmt.Fprintf(os.Stderr, "  whitelist add    <val>      agrega IP/CIDR o cuenta (en memoria)\n")
-		fmt.Fprintf(os.Stderr, "  whitelist remove <val>      elimina IP/CIDR o cuenta (en memoria)\n")
+		fmt.Fprintf(os.Stderr, "  whitelist add    <val>      agrega IP/CIDR o cuenta (persistente)\n")
+		fmt.Fprintf(os.Stderr, "  whitelist remove <val>      elimina IP/CIDR o cuenta (persistente)\n")
 		fmt.Fprintf(os.Stderr, "\nOpciones:\n")
 		flag.PrintDefaults()
 	}
@@ -354,14 +354,15 @@ func cmdDomains(cli *apiClient) error {
 
 func cmdWhitelistList(cli *apiClient) error {
 	var body struct {
-		IPs      []string `json:"ips"`
-		Accounts []string `json:"accounts"`
+		IPs        []string `json:"ips"`
+		Accounts   []string `json:"accounts"`
+		BuiltinIPs []string `json:"builtin_ips"`
 	}
 	if err := cli.get("/whitelist", &body); err != nil {
 		return err
 	}
 
-	if len(body.IPs) == 0 && len(body.Accounts) == 0 {
+	if len(body.IPs) == 0 && len(body.Accounts) == 0 && len(body.BuiltinIPs) == 0 {
 		fmt.Println("Whitelist vacía.")
 		return nil
 	}
@@ -378,6 +379,12 @@ func cmdWhitelistList(cli *apiClient) error {
 	for _, a := range body.Accounts {
 		fmt.Printf("    %s\n", a)
 	}
+	if len(body.BuiltinIPs) > 0 {
+		fmt.Printf("\n  Redes internas embebidas, siempre exentas (%d):\n", len(body.BuiltinIPs))
+		for _, ip := range body.BuiltinIPs {
+			fmt.Printf("    %s\n", ip)
+		}
+	}
 	return nil
 }
 
@@ -388,11 +395,10 @@ func cmdWhitelistAdd(cli *apiClient, value string) error {
 	}
 	if ip, ok := body["added_ip"]; ok {
 		fmt.Printf("IP/CIDR agregada a la whitelist: %s\n", ip)
-		fmt.Println("Nota: cambio en memoria. Actualiza agent.yaml para que persista.")
 	} else if acc, ok := body["added_account"]; ok {
 		fmt.Printf("Cuenta agregada a la whitelist: %s\n", acc)
-		fmt.Println("Nota: cambio en memoria. Actualiza agent.yaml para que persista.")
 	}
+	fmt.Println("Persistida en la base local: sobrevive reinicios y redeploys.")
 	return nil
 }
 

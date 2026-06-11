@@ -311,6 +311,16 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		return
 	}
 
+	// Las redes privadas (RFC 1918), loopback y link-local nunca se bloquean:
+	// son tráfico interno (proxy Zimbra, webmail, oficina) y un ban aquí puede
+	// dejar fuera de servicio el propio mail server. Aplica también a los
+	// bloqueos manuales vía API y al ban de IP que acompaña a suspend_account.
+	if isPrivateIP(alert.IP) {
+		slog.Warn("enforcement: IP privada/local, bloqueo de firewall omitido",
+			"ip", alert.IP, "module", alert.Module)
+		return
+	}
+
 	// País permitido: no se bloquea en el firewall, no se persiste en SQLite y NO
 	// se registra en el mapa de bloqueados — de lo contrario IsBlocked() devolvería
 	// true y el policy daemon rechazaría las conexiones SMTP de esta IP pese a que
@@ -425,6 +435,16 @@ func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 func isValidIP(ip string) bool {
 	parsed := net.ParseIP(ip)
 	return parsed != nil && parsed.To4() != nil
+}
+
+// isPrivateIP retorna true si la IP es privada (RFC 1918), loopback o link-local.
+// Estas IPs jamás deben terminar en una regla de bloqueo del firewall.
+func isPrivateIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	return parsed.IsPrivate() || parsed.IsLoopback() || parsed.IsLinkLocalUnicast() || parsed.IsUnspecified()
 }
 
 // BlockedIPInfo describe una IP bloqueada actualmente.
@@ -584,6 +604,9 @@ func (e *Enforcer) loadBansFromFirewalld(ctx context.Context) {
 func (e *Enforcer) Block(ctx context.Context, ip string, ttlOverride int) error {
 	if !isValidIP(ip) {
 		return fmt.Errorf("IP inválida: %s", ip)
+	}
+	if isPrivateIP(ip) {
+		return fmt.Errorf("IP privada/local, no se bloquea: %s", ip)
 	}
 
 	banSecs := e.cfg.BanSeconds
