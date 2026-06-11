@@ -28,9 +28,10 @@ sendguard_email_to:
   - "soc@perulinux.pe"
 
 # Filtrar notificaciones push por acción (vacío = todo).
-# sendguard_notify_on_actions:
-#   - "block_ip"
-#   - "suspend_account"
+# Valores: block_ip | suspend_account | rate_limit | notify_only
+# Audit log, SQLite y Controller registran todo igualmente; esto solo filtra el push.
+sendguard_notify_on_actions:
+  - "suspend_account"
 
 # Controller central (vacío = standalone).
 # sendguard_controller_url: "https://controller.perulinux.pe"
