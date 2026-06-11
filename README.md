@@ -30,7 +30,7 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 | Module | Score | Data source | Action |
 |---|:-:|---|---|
 | `auth_failed` | 60 | SASL failures in `mail.log` | Block IP |
-| `number_messages` | 80 | `qmgr` events in `mail.log` | Suspend account |
+| `number_messages` | 80 | External `status=sent` deliveries in `mail.log` | Suspend account |
 | `sasl_connections` | 65 / 90 | SASL successes in `mail.log` | Suspend account / Block IP + Suspend account |
 | `dist_brute_force` | 55 | SASL failures in `mail.log` | Notify only |
 | `impossible_traveler` | 85 | Auth successes + GeoIP | Suspend account |
@@ -57,10 +57,10 @@ Maintains a sliding window of SASL failure timestamps per IP. On every failure t
 
 #### `number_messages` — Anomalous outbound volume
 
-Reads every `qmgr` `from=<account>` event (the earliest point at which Postfix knows the authenticated sender and has accepted the message for delivery). Accumulates message timestamps per account. When an account exceeds `max_messages` in the window, it is suspended. Empty-sender messages (`from=<>`, NDRs/bounces) are ignored to prevent false positives.
+Counts deliveries to **external domains only**: `status=sent` events via `postfix/smtp` whose relay is not loopback nor a private network. Local mailbox deliveries (`postfix/lmtp`) and internal hops (amavis on `127.0.0.1:10024`, internal MTAs) do not count — mail between accounts hosted on the server is not outbound spam. The authenticated sender is correlated by the parser, including across content-filter re-injection (`queued as`); inbound MX traffic is ignored. When an account exceeds `max_messages` external deliveries in the window, it is suspended.
 
 - **Score:** 80 &nbsp;|&nbsp; **Action:** Suspend account
-- **Defaults:** 300 messages / 1 hour
+- **Defaults:** 100 external messages / 1 hour
 - Does **not** block the source IP — legitimate senders may connect from Outlook Mobile or other app proxies.
 
 ---

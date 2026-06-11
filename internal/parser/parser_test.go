@@ -486,3 +486,103 @@ func checkEvent(t *testing.T, got, want event.Event) {
 		t.Errorf("QueueID: got %q, want %q", got.QueueID, want.QueueID)
 	}
 }
+
+// TestSentCorrelation verifica que una entrega exitosa recibe la cuenta del
+// remitente autenticado, lo que permite a number_messages contar envíos externos.
+func TestSentCorrelation(t *testing.T) {
+	p := parser.New()
+
+	lines := []string{
+		`May 11 10:00:00 mail postfix/smtps/smtpd[1]: QUEUEABC: client=unknown[1.2.3.4], sasl_method=PLAIN, sasl_username=user@domain.com`,
+		`May 11 10:00:01 mail postfix/qmgr[2]: QUEUEABC: from=<user@domain.com>, size=1024, nrcpt=1 (queue active)`,
+	}
+	for _, l := range lines {
+		if _, ok := p.ParseLine(l); !ok {
+			t.Fatalf("línea debe parsear ok: %s", l)
+		}
+	}
+
+	sentLine := `May 11 10:00:02 mail postfix/smtp[3]: QUEUEABC: to=<dest@externo.com>, relay=mx.externo.com[203.0.113.25]:25, delay=1, delays=0.1/0/0.3/0.6, dsn=2.0.0, status=sent (250 2.0.0 OK)`
+	ev, ok := p.ParseLine(sentLine)
+	if !ok {
+		t.Fatal("sent line debe parsear ok")
+	}
+	if ev.Type != event.MessageSent {
+		t.Fatalf("Type: got %q, want MessageSent", ev.Type)
+	}
+	if ev.Account != "user@domain.com" {
+		t.Errorf("Account: got %q, want user@domain.com (correlación con SASL auth)", ev.Account)
+	}
+	if ev.Extra["relay"] != "mx.externo.com[203.0.113.25]:25" {
+		t.Errorf("relay: got %q", ev.Extra["relay"])
+	}
+}
+
+// TestQueuedAsChaining verifica que la re-inyección del content filter (amavis)
+// no rompe la correlación: el "queued as NUEVOID" del salto a amavis traslada el
+// remitente al nuevo queue ID, y la entrega externa posterior conserva la cuenta.
+func TestQueuedAsChaining(t *testing.T) {
+	p := parser.New()
+
+	lines := []string{
+		`May 11 10:00:00 mail postfix/smtpd[1]: AAAA111111: client=unknown[1.2.3.4], sasl_method=PLAIN, sasl_username=user@domain.com`,
+		`May 11 10:00:01 mail postfix/qmgr[2]: AAAA111111: from=<user@domain.com>, size=1024, nrcpt=1 (queue active)`,
+	}
+	for _, l := range lines {
+		if _, ok := p.ParseLine(l); !ok {
+			t.Fatalf("línea debe parsear ok: %s", l)
+		}
+	}
+
+	// Salto a amavis: status=sent hacia loopback con re-encolado "queued as BBBB222222".
+	amavisLine := `May 11 10:00:02 mail postfix/smtp[3]: AAAA111111: to=<dest@externo.com>, relay=127.0.0.1[127.0.0.1]:10024, delay=2, delays=0.1/0/0.3/1.6, dsn=2.0.0, status=sent (250 2.0.0 from MTA(smtp:[127.0.0.1]:10025): 250 2.0.0 Ok: queued as BBBB222222)`
+	amavisEv, ok := p.ParseLine(amavisLine)
+	if !ok {
+		t.Fatal("amavis hop line debe parsear ok")
+	}
+	if amavisEv.Account != "user@domain.com" {
+		t.Errorf("amavis hop: Account got %q, want user@domain.com", amavisEv.Account)
+	}
+
+	// Entrega externa del mensaje re-inyectado (nuevo queue ID, sin SASL propio).
+	extLine := `May 11 10:00:05 mail postfix/smtp[4]: BBBB222222: to=<dest@externo.com>, relay=mx.externo.com[203.0.113.25]:25, delay=3, delays=0.1/0/0.5/2.4, dsn=2.0.0, status=sent (250 2.0.0 OK)`
+	extEv, ok := p.ParseLine(extLine)
+	if !ok {
+		t.Fatal("entrega externa post-amavis debe parsear ok")
+	}
+	if extEv.Account != "user@domain.com" {
+		t.Errorf("post-amavis: Account got %q, want user@domain.com (encadenado queued as)", extEv.Account)
+	}
+
+	// Un bounce del mensaje re-inyectado también debe conservar la cuenta.
+	bounceLine := `May 11 10:00:06 mail postfix/smtp[5]: BBBB222222: to=<otro@externo.com>, relay=mx.externo.com[203.0.113.25]:25, delay=3, delays=0.1/0/0.5/2.4, dsn=5.1.1, status=bounced (user unknown)`
+	bounceEv, ok := p.ParseLine(bounceLine)
+	if !ok {
+		t.Fatal("bounce post-amavis debe parsear ok")
+	}
+	if bounceEv.Account != "user@domain.com" {
+		t.Errorf("bounce post-amavis: Account got %q, want user@domain.com", bounceEv.Account)
+	}
+}
+
+// TestInboundDeliveryHasNoAccount verifica que el tráfico MX entrante (sin SASL)
+// no recibe cuenta: number_messages no debe contar correo que solo entra al servidor.
+func TestInboundDeliveryHasNoAccount(t *testing.T) {
+	p := parser.New()
+
+	// qmgr de un mensaje entrante (nunca hubo sasl_username para este queue ID):
+	// parseQmgr lo ignora y no registra remitente.
+	qmgrLine := `May 11 10:00:01 mail postfix/qmgr[2]: CCCC333333: from=<externo@sunat.gob.pe>, size=2048, nrcpt=1 (queue active)`
+	if _, ok := p.ParseLine(qmgrLine); ok {
+		t.Fatal("qmgr de tráfico MX entrante no debe emitir evento")
+	}
+
+	lmtpLine := `May 11 10:00:02 mail postfix/lmtp[3]: CCCC333333: to=<local@domain.com>, relay=mail.domain.com[10.0.0.5]:7025, delay=0.4, delays=0.1/0/0.1/0.2, dsn=2.0.0, status=sent (250 2.0.0 OK)`
+	ev, ok := p.ParseLine(lmtpLine)
+	if !ok {
+		t.Fatal("entrega lmtp debe parsear ok")
+	}
+	if ev.Account != "" {
+		t.Errorf("entrega de correo entrante: Account got %q, want vacío", ev.Account)
+	}
+}

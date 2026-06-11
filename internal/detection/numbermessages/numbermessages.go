@@ -1,16 +1,19 @@
 // Package numbermessages detecta cuentas Zimbra que superan el volumen de envío
-// configurado en una ventana deslizante. Cuando una cuenta compromentida es utilizada
-// para spam masivo, el módulo emite una alerta de suspensión antes de que el servidor
-// quede en RBLs.
+// a dominios EXTERNOS configurado en una ventana deslizante. Cuando una cuenta
+// comprometida es utilizada para spam masivo, el módulo emite una alerta de
+// suspensión antes de que el servidor quede en RBLs.
 //
-// Fuente de datos: eventos QueueAccepted (postfix/qmgr from=<account>).
-// Se usa qmgr porque es el punto más temprano donde conocemos el remitente y ya
-// está en cola — no hay que esperar a la entrega efectiva. Los mensajes con
-// remitente vacío (from=<>, típicos de NDRs/bounces) se ignoran.
+// Fuente de datos: eventos MessageSent (postfix/smtp, status=sent) con remitente
+// autenticado correlacionado por el parser. Solo cuentan las entregas que salen
+// del servidor: las entregas locales (postfix/lmtp a buzones Zimbra) y los saltos
+// a infraestructura interna (amavis en loopback, MTAs en redes privadas) se
+// ignoran — el correo interno entre cuentas del propio servidor no es spam saliente.
 package numbermessages
 
 import (
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/perulinux/sendguard/internal/detection"
@@ -19,7 +22,7 @@ import (
 
 // Config agrupa los parámetros del módulo.
 type Config struct {
-	MaxMessages int           // número de mensajes en ventana para disparar alerta
+	MaxMessages int           // número de mensajes externos en ventana para disparar alerta
 	ScanTime    time.Duration // ventana de observación
 }
 
@@ -27,7 +30,7 @@ type Config struct {
 // No es thread-safe: debe ser llamado exclusivamente desde el goroutine del Engine.
 type Module struct {
 	cfg       Config
-	windows   map[string][]time.Time // account → timestamps de mensajes en la ventana
+	windows   map[string][]time.Time // account → timestamps de entregas externas en la ventana
 	callCount int
 }
 
@@ -44,11 +47,11 @@ func New(cfg Config) *Module {
 // Name implementa detection.Module.
 func (m *Module) Name() string { return "number_messages" }
 
-// Handle procesa un evento. Solo actúa sobre QueueAccepted con remitente conocido.
-// Retorna una alerta con ActionSuspendAcct cuando la cuenta supera MaxMessages
-// en el período ScanTime.
+// Handle procesa un evento. Solo actúa sobre MessageSent de remitente autenticado
+// hacia un relay externo. Retorna una alerta con ActionSuspendAcct cuando la
+// cuenta supera MaxMessages entregas externas en el período ScanTime.
 func (m *Module) Handle(ev event.Event) []detection.Alert {
-	if ev.Type != event.QueueAccepted || ev.Account == "" {
+	if ev.Type != event.MessageSent || ev.Account == "" || !isExternalDelivery(ev) {
 		return nil
 	}
 
@@ -74,7 +77,7 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 
 	score := 80
 	reason := fmt.Sprintf(
-		"%d mensajes enviados por %s en %s (umbral: %d)",
+		"%d mensajes a dominios externos enviados por %s en %s (umbral: %d)",
 		len(current),
 		ev.Account,
 		m.cfg.ScanTime.String(),
@@ -92,6 +95,34 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 		Domain:    ev.Domain,
 		Reasons:   []string{reason},
 	}}
+}
+
+// isExternalDelivery retorna true si la entrega salió del servidor hacia un
+// dominio externo. Las entregas vía lmtp (buzones locales Zimbra) y los relays
+// en loopback o redes privadas (amavis en 127.0.0.1:10024, MTAs internos) son
+// tráfico dentro del servidor y no cuentan.
+func isExternalDelivery(ev event.Event) bool {
+	if !strings.HasSuffix(ev.Process, "/smtp") {
+		return false // postfix/lmtp → buzón local
+	}
+	relay := ev.Extra["relay"]
+	if relay == "" {
+		return false
+	}
+	if strings.HasPrefix(relay, "localhost") {
+		return false
+	}
+	// relay = "host[1.2.3.4]:25" — extraer la IP entre corchetes.
+	if i := strings.IndexByte(relay, '['); i != -1 {
+		if j := strings.IndexByte(relay[i+1:], ']'); j != -1 {
+			if ip := net.ParseIP(relay[i+1 : i+1+j]); ip != nil {
+				if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 // pruneExpired elimina del map las cuentas cuya ventana quedó vacía.

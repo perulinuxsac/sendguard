@@ -37,7 +37,7 @@ rules:
     scan_time: 300          # ventana de 5 minutos (segundos)
 
   number_messages:
-    max_messages: 300       # máximo 300 mensajes en la ventana
+    max_messages: 100       # máximo 100 mensajes a dominios EXTERNOS en la ventana (las entregas locales no cuentan)
     scan_time: 3600         # ventana de 1 hora
 
   sasl_connections:

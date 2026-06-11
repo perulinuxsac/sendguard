@@ -72,7 +72,7 @@ sendguard_zimbra_workers: 4
 # ── Umbrales de los módulos de detección ─────────────────────────────────────
 sendguard_rules:
   auth_failed:        { max_auth_failures: 5, scan_time: 300 }
-  number_messages:    { max_messages: 300, scan_time: 3600 }
+  number_messages:    { max_messages: 100, scan_time: 3600 }  # solo entregas a dominios externos
   sasl_connections:   { max_sasl_connections: 20, max_unique_ips: 5, scan_time: 300 }
   dist_brute_force:   { max_ips: 5, scan_time: 300 }
   impossible_traveler: { window_minutes: 30 }

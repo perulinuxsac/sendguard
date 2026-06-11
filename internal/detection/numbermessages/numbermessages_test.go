@@ -14,13 +14,16 @@ var defaultCfg = numbermessages.Config{
 	ScanTime:    1 * time.Hour,
 }
 
-func queueEvent(account string, ts time.Time) event.Event {
+// sentEvent simula una entrega exitosa a un dominio externo (relay público).
+func sentEvent(account string, ts time.Time) event.Event {
 	return event.Event{
-		Type:      event.QueueAccepted,
+		Type:      event.MessageSent,
+		Process:   "postfix/smtp",
 		Account:   account,
 		Domain:    domainOf(account),
 		Server:    "mail01",
 		Timestamp: ts,
+		Extra:     map[string]string{"to": "dest@externo.com", "relay": "mx.externo.com[203.0.113.25]:25"},
 	}
 }
 
@@ -38,7 +41,7 @@ func TestBelowThreshold(t *testing.T) {
 	now := time.Now()
 
 	for i := 0; i < defaultCfg.MaxMessages-1; i++ {
-		alerts := m.Handle(queueEvent("user@domain.com", now.Add(time.Duration(i)*time.Second)))
+		alerts := m.Handle(sentEvent("user@domain.com", now.Add(time.Duration(i)*time.Second)))
 		if len(alerts) != 0 {
 			t.Fatalf("mensaje %d: no debe haber alerta antes del umbral", i+1)
 		}
@@ -51,7 +54,7 @@ func TestExactThreshold(t *testing.T) {
 
 	var alerts []detection.Alert
 	for i := 0; i < defaultCfg.MaxMessages; i++ {
-		alerts = m.Handle(queueEvent("user@domain.com", now.Add(time.Duration(i)*time.Second)))
+		alerts = m.Handle(sentEvent("user@domain.com", now.Add(time.Duration(i)*time.Second)))
 	}
 
 	if len(alerts) != 1 {
@@ -84,12 +87,12 @@ func TestWindowExpiry(t *testing.T) {
 
 	// MaxMessages-1 mensajes al inicio de la ventana
 	for i := 0; i < defaultCfg.MaxMessages-1; i++ {
-		m.Handle(queueEvent("spammer@domain.com", now))
+		m.Handle(sentEvent("spammer@domain.com", now))
 	}
 
 	// Un mensaje llegado justo cuando los anteriores expirarán
 	future := now.Add(defaultCfg.ScanTime + time.Second)
-	alerts := m.Handle(queueEvent("spammer@domain.com", future))
+	alerts := m.Handle(sentEvent("spammer@domain.com", future))
 
 	if len(alerts) != 0 {
 		t.Fatal("los mensajes viejos debieron expirar: no debe generarse alerta")
@@ -102,14 +105,14 @@ func TestWindowExpiryThenSuspend(t *testing.T) {
 
 	// MaxMessages-1 mensajes viejos (fuera de la próxima ventana)
 	for i := 0; i < defaultCfg.MaxMessages-1; i++ {
-		m.Handle(queueEvent("spammer@domain.com", now))
+		m.Handle(sentEvent("spammer@domain.com", now))
 	}
 
 	// MaxMessages mensajes frescos dentro de la nueva ventana → suspensión
 	future := now.Add(defaultCfg.ScanTime + time.Second)
 	var alerts []detection.Alert
 	for i := 0; i < defaultCfg.MaxMessages; i++ {
-		alerts = m.Handle(queueEvent("spammer@domain.com", future.Add(time.Duration(i)*time.Second)))
+		alerts = m.Handle(sentEvent("spammer@domain.com", future.Add(time.Duration(i)*time.Second)))
 	}
 
 	if len(alerts) != 1 {
@@ -123,13 +126,13 @@ func TestResetAfterSuspend(t *testing.T) {
 
 	// Primer bloqueo
 	for i := 0; i < defaultCfg.MaxMessages; i++ {
-		m.Handle(queueEvent("victim@domain.com", now.Add(time.Duration(i)*time.Second)))
+		m.Handle(sentEvent("victim@domain.com", now.Add(time.Duration(i)*time.Second)))
 	}
 
 	// Tras suspensión el contador debe reiniciarse
 	later := now.Add(time.Minute)
 	for i := 0; i < defaultCfg.MaxMessages-1; i++ {
-		alerts := m.Handle(queueEvent("victim@domain.com", later.Add(time.Duration(i)*time.Second)))
+		alerts := m.Handle(sentEvent("victim@domain.com", later.Add(time.Duration(i)*time.Second)))
 		if len(alerts) != 0 {
 			t.Fatalf("tras suspensión el contador debe reiniciarse (mensaje %d)", i+1)
 		}
@@ -140,13 +143,10 @@ func TestIgnoresEmptyAccount(t *testing.T) {
 	m := numbermessages.New(defaultCfg)
 	now := time.Now()
 
-	// from=<> (bounce/NDR) — no tiene cuenta, debe ignorarse siempre
+	// Entregas sin remitente correlacionado (tráfico MX entrante) deben ignorarse.
 	for i := 0; i < defaultCfg.MaxMessages*2; i++ {
-		ev := event.Event{
-			Type:      event.QueueAccepted,
-			Account:   "",
-			Timestamp: now,
-		}
+		ev := sentEvent("", now)
+		ev.Domain = ""
 		alerts := m.Handle(ev)
 		if len(alerts) != 0 {
 			t.Fatal("mensajes sin remitente (from=<>) no deben generar alertas")
@@ -154,20 +154,76 @@ func TestIgnoresEmptyAccount(t *testing.T) {
 	}
 }
 
-func TestIgnoresNonQueueAccepted(t *testing.T) {
+func TestIgnoresNonMessageSent(t *testing.T) {
 	m := numbermessages.New(defaultCfg)
 	now := time.Now()
 
 	otherTypes := []event.Type{
 		event.AuthFailed, event.AuthSuccess,
-		event.MessageSent, event.MessageBounce, event.MessageDeferred,
+		event.QueueAccepted, event.MessageBounce, event.MessageDeferred,
 	}
 	for _, t2 := range otherTypes {
-		ev := event.Event{Type: t2, Account: "user@domain.com", Timestamp: now}
+		ev := sentEvent("user@domain.com", now)
+		ev.Type = t2
 		alerts := m.Handle(ev)
 		if len(alerts) != 0 {
 			t.Errorf("tipo %q no debe generar alertas en NumberMessages", t2)
 		}
+	}
+}
+
+// ── Solo cuentan las entregas a dominios externos ────────────────────────────
+
+func TestIgnoresLocalLMTPDelivery(t *testing.T) {
+	m := numbermessages.New(defaultCfg)
+	now := time.Now()
+
+	// Entregas a buzones locales del propio servidor (postfix/lmtp): no cuentan.
+	for i := 0; i < defaultCfg.MaxMessages*2; i++ {
+		ev := sentEvent("user@domain.com", now.Add(time.Duration(i)*time.Second))
+		ev.Process = "postfix/lmtp"
+		ev.Extra["relay"] = "mail01.domain.com[10.0.0.5]:7025"
+		if alerts := m.Handle(ev); len(alerts) != 0 {
+			t.Fatal("entregas lmtp (buzón local) no deben generar alertas")
+		}
+	}
+}
+
+func TestIgnoresInternalRelays(t *testing.T) {
+	m := numbermessages.New(defaultCfg)
+	now := time.Now()
+
+	internalRelays := []string{
+		"127.0.0.1[127.0.0.1]:10024",       // amavis (content filter)
+		"localhost[127.0.0.1]:10025",       // re-inyección
+		"mta2.interno.pe[192.168.10.4]:25", // MTA interno RFC 1918
+		"relay.interno.pe[172.16.5.10]:25", // MTA interno RFC 1918
+	}
+	for _, relay := range internalRelays {
+		for i := 0; i < defaultCfg.MaxMessages*2; i++ {
+			ev := sentEvent("user@domain.com", now.Add(time.Duration(i)*time.Second))
+			ev.Extra["relay"] = relay
+			if alerts := m.Handle(ev); len(alerts) != 0 {
+				t.Fatalf("relay interno %q no debe generar alertas", relay)
+			}
+		}
+	}
+}
+
+func TestExternalAndInternalMixed(t *testing.T) {
+	m := numbermessages.New(defaultCfg)
+	now := time.Now()
+
+	// Intercalar entregas internas: solo las externas deben acumular.
+	var alerts []detection.Alert
+	for i := 0; i < defaultCfg.MaxMessages; i++ {
+		local := sentEvent("user@domain.com", now.Add(time.Duration(i)*time.Second))
+		local.Process = "postfix/lmtp"
+		m.Handle(local)
+		alerts = m.Handle(sentEvent("user@domain.com", now.Add(time.Duration(i)*time.Second)))
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("las %d externas deben disparar la alerta (las locales no cuentan): got %d", defaultCfg.MaxMessages, len(alerts))
 	}
 }
 
@@ -177,12 +233,12 @@ func TestMultipleAccounts(t *testing.T) {
 
 	// cuenta A llega al umbral
 	for i := 0; i < defaultCfg.MaxMessages; i++ {
-		m.Handle(queueEvent("accountA@domain.com", now.Add(time.Duration(i)*time.Second)))
+		m.Handle(sentEvent("accountA@domain.com", now.Add(time.Duration(i)*time.Second)))
 	}
 
 	// cuenta B todavía no debe disparar alerta
 	for i := 0; i < defaultCfg.MaxMessages-1; i++ {
-		alerts := m.Handle(queueEvent("accountB@domain.com", now.Add(time.Duration(i)*time.Second)))
+		alerts := m.Handle(sentEvent("accountB@domain.com", now.Add(time.Duration(i)*time.Second)))
 		if len(alerts) != 0 {
 			t.Fatal("cuenta B no debe disparar alerta antes del umbral")
 		}
@@ -195,7 +251,7 @@ func TestDomainPropagated(t *testing.T) {
 
 	var last []detection.Alert
 	for i := 0; i < defaultCfg.MaxMessages; i++ {
-		last = m.Handle(queueEvent("user@example.com", now.Add(time.Duration(i)*time.Second)))
+		last = m.Handle(sentEvent("user@example.com", now.Add(time.Duration(i)*time.Second)))
 	}
 	if len(last) != 1 {
 		t.Fatal("se esperaba una alerta")
@@ -210,7 +266,7 @@ func TestServerPropagated(t *testing.T) {
 	now := time.Now()
 
 	ev := func(i int) event.Event {
-		e := queueEvent("user@domain.com", now.Add(time.Duration(i)*time.Second))
+		e := sentEvent("user@domain.com", now.Add(time.Duration(i)*time.Second))
 		e.Server = "zimbra-srv-01"
 		return e
 	}

@@ -18,7 +18,7 @@ func TestDefaultValues(t *testing.T) {
 		{"Zimbra.Workers", cfg.Zimbra.Workers, 4},
 		{"Rules.AuthFailed.MaxFailures", cfg.Rules.AuthFailed.MaxFailures, 5},
 		{"Rules.AuthFailed.ScanTime", cfg.Rules.AuthFailed.ScanTime, 300},
-		{"Rules.NumberMessages.MaxMessages", cfg.Rules.NumberMessages.MaxMessages, 300},
+		{"Rules.NumberMessages.MaxMessages", cfg.Rules.NumberMessages.MaxMessages, 100},
 		{"Rules.NumberMessages.ScanTime", cfg.Rules.NumberMessages.ScanTime, 3600},
 		{"Rules.SaslConnections.Max", cfg.Rules.SaslConnections.Max, 20},
 		{"Rules.ImpossibleTraveler.WindowMinutes", cfg.Rules.ImpossibleTraveler.WindowMinutes, 30},
@@ -112,8 +112,8 @@ firewall:
 		t.Errorf("BanSeconds: got %d, want 7200", cfg.Firewall.BanSeconds)
 	}
 	// Campos no definidos en YAML → default preservado
-	if cfg.Rules.NumberMessages.MaxMessages != 300 {
-		t.Errorf("MaxMessages (default): got %d, want 300", cfg.Rules.NumberMessages.MaxMessages)
+	if cfg.Rules.NumberMessages.MaxMessages != 100 {
+		t.Errorf("MaxMessages (default): got %d, want 100", cfg.Rules.NumberMessages.MaxMessages)
 	}
 }
 

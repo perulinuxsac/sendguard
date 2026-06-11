@@ -210,7 +210,7 @@ func Default() *Config {
 	cfg.Rules.AuthFailed.MaxFailures = 5
 	cfg.Rules.AuthFailed.ScanTime = 300
 
-	cfg.Rules.NumberMessages.MaxMessages = 300
+	cfg.Rules.NumberMessages.MaxMessages = 100 // solo cuentan entregas a dominios externos
 	cfg.Rules.NumberMessages.ScanTime = 3600
 
 	cfg.Rules.SaslConnections.Max = 20

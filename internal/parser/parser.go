@@ -60,6 +60,11 @@ var (
 	reDelivery = regexp.MustCompile(
 		`^(\w+):\s+to=<([^>]*)>,\s+relay=(\S+),.*?\bstatus=(sent|bounced|deferred)\b`,
 	)
+
+	// status=sent (250 2.0.0 ... Ok: queued as 4XYZ123) — re-inyección del content
+	// filter (amavis): el mensaje continúa con OTRO queue ID. Capturarlo permite
+	// encadenar el remitente autenticado al nuevo ID.
+	reQueuedAs = regexp.MustCompile(`\bqueued as ([0-9A-Za-z]+)\b`)
 )
 
 // ── Regexes para /opt/zimbra/log/mailbox.log ────────────────────────────────
@@ -399,16 +404,27 @@ func (p *Parser) parseDelivery(ev event.Event, msg string) (event.Event, bool) {
 		"relay": m[3],
 	}
 
+	// Correlacionar la entrega con la cuenta del remitente autenticado.
+	// Solo existe entrada para colas que pasaron por SASL (outbound), nunca
+	// para tráfico MX entrante.
+	if entry, ok := p.queueSenders[m[1]]; ok {
+		ev.Account = entry.account
+		ev.Domain = extractDomain(entry.account)
+	}
+
 	switch m[4] {
 	case "sent":
 		ev.Type = event.MessageSent
+		// Re-inyección del content filter (amavis): "queued as NUEVOID".
+		// Encadenar el remitente al nuevo queue ID para no perder la cuenta
+		// en las entregas (sent/bounced) del mensaje post-filtro.
+		if entry, ok := p.queueSenders[m[1]]; ok {
+			if qm := reQueuedAs.FindStringSubmatch(msg); qm != nil && qm[1] != m[1] {
+				p.queueSenders[qm[1]] = entry
+			}
+		}
 	case "bounced":
 		ev.Type = event.MessageBounce
-		// Correlacionar bounce con la cuenta del remitente autenticado.
-		if entry, ok := p.queueSenders[m[1]]; ok {
-			ev.Account = entry.account
-			ev.Domain = extractDomain(entry.account)
-		}
 	case "deferred":
 		ev.Type = event.MessageDeferred
 	default:
