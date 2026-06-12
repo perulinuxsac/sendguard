@@ -5,14 +5,17 @@
   ansible.builtin.command: systemctl --version
   changed_when: false
 
+# firewalld-ipset: un único set hash:net enlazado a la zona drop, en vez de una
+# rich rule por IP (16k reglas acumuladas degradaban firewalld en webmail).
+# Para volver a rich rules, define sendguard_firewall_backend: firewalld en host_vars.
 - name: Seleccionar backend de firewall según familia de OS
   ansible.builtin.set_fact:
-    sendguard_firewall_backend: "{{ 'ufw' if ansible_os_family == 'Debian' else 'firewalld' }}"
+    sendguard_firewall_backend: "{{ sendguard_firewall_backend | default('ufw' if ansible_os_family == 'Debian' else 'firewalld-ipset', true) }}"
 
 - name: Verificar firewalld activo (RHEL/Rocky)
   ansible.builtin.command: systemctl is-active firewalld
   changed_when: false
-  when: sendguard_firewall_backend == 'firewalld'
+  when: sendguard_firewall_backend in ['firewalld', 'firewalld-ipset']
 
 - name: Verificar ufw activo (Ubuntu/Debian)
   ansible.builtin.command: ufw status

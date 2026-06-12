@@ -17,11 +17,20 @@ type fw interface {
 	ListBlockedIPs(ctx context.Context) ([]string, error)
 }
 
+// fwSetup lo implementan los backends que requieren inicialización
+// (ej: firewalld-ipset crea el set y su binding la primera vez).
+type fwSetup interface {
+	Setup(ctx context.Context) error
+}
+
 // newFW returns the appropriate firewall backend.
 // Unknown or empty backend defaults to firewalld.
 func newFW(backend string) fw {
-	if backend == "ufw" {
+	switch backend {
+	case "ufw":
 		return &ufwFW{}
+	case "firewalld-ipset":
+		return &ipsetFW{}
 	}
 	return &firewalldFW{}
 }

@@ -135,10 +135,13 @@ local_db:
   max_size_mb: 100
 
 # Firewall (única dependencia del sistema operativo)
-# backend: "firewalld" para RHEL/CentOS/Rocky/AlmaLinux
-#           "ufw"       para Ubuntu/Debian
+# backend: "firewalld-ipset" para RHEL/CentOS/Rocky/AlmaLinux (recomendado:
+#                            un único set hash:net en la zona drop; altas O(1)
+#                            aunque haya miles de IPs bloqueadas)
+#          "firewalld"       rich rules clásicas (una por IP; degrada con miles)
+#          "ufw"             para Ubuntu/Debian
 firewall:
-  backend: "firewalld"
+  backend: "firewalld-ipset"
   ban_seconds: 3600         # bloquear IP por 1 hora (0 = permanente)
 
 # Policy Daemon — rechazo en tiempo real vía Postfix check_policy_service

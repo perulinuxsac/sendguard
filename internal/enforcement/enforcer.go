@@ -169,9 +169,10 @@ func (e *Enforcer) unbanExpired(ctx context.Context) {
 	e.mu.Unlock()
 
 	for _, ip := range expired {
-		// firewalld expira la regla con --timeout; solo ufw requiere eliminarla
-		// explícitamente. Para firewalld nos limitamos a purgar el estado interno.
-		if e.cfg.FirewallBackend == "ufw" {
+		// firewalld (rich rules) expira la regla con --timeout; ufw y
+		// firewalld-ipset no tienen expiración nativa y requieren eliminar
+		// la regla/entrada explícitamente.
+		if e.needsExplicitUnban() {
 			if err := e.fw.Unblock(ctx, ip); err != nil {
 				slog.Warn("enforcement: fallo al desbloquear IP expirada", "ip", ip, "error", err)
 			} else {
@@ -620,19 +621,75 @@ func (e *Enforcer) Stats() EnforcerStats {
 	}
 }
 
+// needsExplicitUnban retorna true para los backends sin expiración nativa de
+// reglas (ufw, firewalld-ipset): el enforcer debe eliminar la regla al expirar.
+func (e *Enforcer) needsExplicitUnban() bool {
+	return e.cfg.FirewallBackend == "ufw" || e.cfg.FirewallBackend == "firewalld-ipset"
+}
+
 // LoadExistingBans reconstruye el mapa interno de IPs baneadas al arrancar.
 // Estrategia de dos fuentes (en orden de preferencia):
 //  1. SQLite local — expirations exactas, restauración fiable tras reinicio.
 //     Si la lectura tiene éxito (incluso con 0 bans), SQLite es autoritativo
 //     y NO se consulta el firewall (0 bans = todos expiraron limpiamente).
 //  2. Firewall     — fallback solo si SQLite no está configurado o devuelve error.
+//
+// Para backends con Setup (firewalld-ipset) además inicializa el firewall y
+// repuebla las reglas desde el estado restaurado: tras un reload o reboot las
+// entradas runtime del ipset se pierden, y SQLite es quien sabe qué bans
+// siguen vigentes.
 func (e *Enforcer) LoadExistingBans(ctx context.Context) {
+	if s, ok := e.fw.(fwSetup); ok {
+		if err := s.Setup(ctx); err != nil {
+			slog.Error("enforcement: fallo al inicializar el backend de firewall", "error", err)
+		}
+	}
+
 	if e.cfg.Store != nil {
 		if _, ok := e.loadBansFromStore(); ok {
+			e.resyncFirewall(ctx)
 			return // SQLite accesible — no reimportar reglas del firewall
 		}
 	}
 	e.loadBansFromFirewalld(ctx)
+}
+
+// resyncFirewall re-aplica en el firewall los bans vigentes restaurados de
+// SQLite. Solo para backends con unban explícito (ipset): en firewalld con
+// rich rules las reglas permanentes ya sobreviven solas y re-crear las
+// temporales con --timeout duplicaría su duración. Idempotente: las entradas
+// ya presentes responden ALREADY_ENABLED y se ignoran.
+func (e *Enforcer) resyncFirewall(ctx context.Context) {
+	if !e.needsExplicitUnban() {
+		return
+	}
+
+	now := time.Now()
+	e.mu.Lock()
+	targets := make(map[string]int, len(e.blockedIPs)) // ip → banSeconds (0 = permanente)
+	for ip, entry := range e.blockedIPs {
+		if !now.Before(entry.expiry) {
+			continue
+		}
+		banSecs := 0
+		if remaining := entry.expiry.Sub(now); remaining < 50*365*24*time.Hour {
+			banSecs = int(remaining.Seconds()) + 1
+		}
+		targets[ip] = banSecs
+	}
+	e.mu.Unlock()
+
+	synced := 0
+	for ip, banSecs := range targets {
+		if err := e.fw.Block(ctx, ip, banSecs); err != nil {
+			slog.Warn("enforcement: resync: no se pudo re-aplicar ban", "ip", ip, "error", err)
+			continue
+		}
+		synced++
+	}
+	if synced > 0 {
+		slog.Info("enforcement: bans re-aplicados en el firewall", "count", synced)
+	}
 }
 
 // loadBansFromStore restaura bans desde SQLite.

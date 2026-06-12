@@ -156,7 +156,7 @@ type LocalDBConf struct {
 }
 
 type FirewallConf struct {
-	Backend    string `yaml:"backend"`     // "firewalld" (único soportado por ahora)
+	Backend    string `yaml:"backend"`     // "firewalld-ipset" (recomendado) | "firewalld" (rich rules) | "ufw"
 	BanSeconds int    `yaml:"ban_seconds"` // duración del bloqueo (0 = permanente)
 }
 
