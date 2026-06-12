@@ -184,6 +184,14 @@ type EmailConf struct {
 	From        string   `yaml:"from"`         // dirección remitente (requerido para activar el canal)
 	To          []string `yaml:"to"`           // destinatarios (al menos uno requerido)
 	SendmailBin string   `yaml:"sendmail_bin"` // default: /opt/zimbra/common/sbin/sendmail
+	// NotifySuspendedUser envía un aviso AL PROPIO USUARIO cuando su cuenta es
+	// suspendida por compromiso (solo en suspend_account, nunca en otras acciones).
+	// El buzón locked sigue recibiendo correo; el usuario lo verá tras el reseteo.
+	// Solo requiere `from` — no depende de la lista `to` de administradores.
+	NotifySuspendedUser bool `yaml:"notify_suspended_user"`
+	// UserNoticeFrom es el remitente del aviso al usuario suspendido (también
+	// destino del botón "contactar al soporte"). Vacío = usa `from`.
+	UserNoticeFrom string `yaml:"user_notice_from"`
 }
 
 type TelegramConf struct {

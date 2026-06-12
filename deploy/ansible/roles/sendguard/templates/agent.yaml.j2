@@ -103,6 +103,8 @@ notification:
 {% for t in sendguard_email_to %}
       - "{{ t }}"
 {% endfor %}
+    notify_suspended_user: {{ sendguard_notify_suspended_user | bool | lower }}
+    user_notice_from: "{{ sendguard_user_notice_from }}"
   cooldown_seconds: {{ sendguard_notify_cooldown_seconds }}
   max_per_minute: {{ sendguard_notify_max_per_minute }}
   on_actions:

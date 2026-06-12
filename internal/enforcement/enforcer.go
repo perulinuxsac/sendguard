@@ -36,6 +36,12 @@ type IPWhitelist interface {
 	RemoveIP(ip string)
 }
 
+// UserNotifier envía avisos dirigidos al usuario final afectado (no al admin).
+// Lo implementa email.Notifier; nil deshabilita los avisos.
+type UserNotifier interface {
+	NotifySuspendedUser(ctx context.Context, account string, alert detection.Alert) error
+}
+
 // Config agrupa los parámetros del Enforcer.
 type Config struct {
 	FirewallBackend  string            // "firewalld" (RHEL) o "ufw" (Ubuntu); default: firewalld
@@ -51,6 +57,7 @@ type Config struct {
 	Whitelist        IPWhitelist       // nil deshabilita la sincronización con el engine
 	GeoResolver      *geoip.Resolver   // nil deshabilita la verificación de país en bloqueos
 	AllowedCountries []string          // IPs de estos países no se bloquean en firewall (solo notificación)
+	UserNotifier     UserNotifier      // nil deshabilita el aviso al usuario suspendido
 	// NotifyOnActions filtra las notificaciones push (Telegram/email/webhook) por acción.
 	// Si está vacío se notifica todo. Valores activos: block_ip | suspend_account | rate_limit | notify_only
 	NotifyOnActions []string // vacío = notificar todo
@@ -441,6 +448,18 @@ func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 	e.mu.Unlock()
 	slog.Info("enforcement: cuenta suspendida", "account", alert.Account, "module", alert.Module)
 
+	// Avisar al propio usuario que su cuenta fue suspendida por compromiso.
+	// Se envía DESPUÉS del lock: la cuenta locked sigue recibiendo correo pero
+	// el atacante ya no puede autenticarse para leer o borrar el aviso.
+	if e.cfg.UserNotifier != nil {
+		if err := e.cfg.UserNotifier.NotifySuspendedUser(ctx, alert.Account, alert); err != nil {
+			slog.Warn("enforcement: fallo al enviar aviso al usuario suspendido",
+				"account", alert.Account, "error", err)
+		} else {
+			slog.Info("enforcement: aviso de suspensión enviado al usuario", "account", alert.Account)
+		}
+	}
+
 	// Bloquear también la IP atacante en el firewall si está presente en la alerta.
 	if alert.IP != "" {
 		e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds)
@@ -698,6 +717,14 @@ func (e *Enforcer) Block(ctx context.Context, ip string, ttlOverride int) error 
 		return fmt.Errorf("IP/red privada o local, no se bloquea: %s", ip)
 	}
 
+	// Desacoplar del contexto del request HTTP: en hosts con firewalld lento
+	// (miles de rich rules acumuladas) los dos firewall-cmd de un bloqueo
+	// permanente superan el timeout del cliente, y CommandContext mataría el
+	// segundo a mitad de camino dejando la regla runtime sin su par permanente.
+	// El trabajo continúa con su propio límite aunque el cliente corte antes.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+
 	banSecs := e.cfg.BanSeconds
 	switch {
 	case ttlOverride == -1:
@@ -754,6 +781,11 @@ func (e *Enforcer) Unblock(ctx context.Context, ip string) error {
 		return fmt.Errorf("IP/CIDR inválido: %s", ip)
 	}
 	ip = normalizeTarget(ip)
+
+	// Mismo desacople que Block: las operaciones de firewall no deben morir
+	// con el timeout del request HTTP (ver comentario en Block).
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
 
 	e.mu.Lock()
 	delete(e.blockedIPs, ip)

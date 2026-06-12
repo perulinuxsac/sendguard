@@ -23,6 +23,9 @@ type Config struct {
 	From        string   // dirección remitente (requerido)
 	To          []string // destinatarios (al menos uno requerido)
 	SendmailBin string   // ruta al sendmail (default: /opt/zimbra/common/sbin/sendmail)
+	// UserNoticeFrom es el remitente del aviso al usuario suspendido y el
+	// contacto de soporte mostrado en ese aviso. Default: From.
+	UserNoticeFrom string
 }
 
 // Notifier envía alertas por correo usando el sendmail local de Zimbra.
@@ -34,6 +37,9 @@ type Notifier struct {
 func New(cfg Config) *Notifier {
 	if cfg.SendmailBin == "" {
 		cfg.SendmailBin = defaultSendmail
+	}
+	if cfg.UserNoticeFrom == "" {
+		cfg.UserNoticeFrom = cfg.From
 	}
 	return &Notifier{cfg: cfg}
 }

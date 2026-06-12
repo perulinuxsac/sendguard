@@ -69,7 +69,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	cli := &apiClient{baseURL: *addr, apiKey: *key, http: &http.Client{Timeout: 10 * time.Second}}
+	// Timeout amplio: block/unblock esperan a firewall-cmd, que en hosts con
+	// miles de rich rules tarda varios segundos por invocación.
+	cli := &apiClient{baseURL: *addr, apiKey: *key, http: &http.Client{Timeout: 150 * time.Second}}
 	cmd := flag.Arg(0)
 
 	var err error

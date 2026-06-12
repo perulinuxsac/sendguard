@@ -7,6 +7,7 @@ package enforcement
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,6 +128,69 @@ func TestSuspendAccount(t *testing.T) {
 		Module:  "numbermessages",
 	})
 
+	if e.Stats().SuspensionsTotal != 1 {
+		t.Errorf("SuspensionsTotal: got %d, want 1", e.Stats().SuspensionsTotal)
+	}
+}
+
+// fakeUserNotifier captura los avisos enviados al usuario suspendido.
+type fakeUserNotifier struct {
+	accounts []string
+	fail     bool
+}
+
+func (f *fakeUserNotifier) NotifySuspendedUser(_ context.Context, account string, _ detection.Alert) error {
+	f.accounts = append(f.accounts, account)
+	if f.fail {
+		return fmt.Errorf("sendmail no disponible")
+	}
+	return nil
+}
+
+func TestSuspendAccountAvisaAlUsuario(t *testing.T) {
+	binDir := setupFakeBin(t, "zmprov")
+	prependPath(t, binDir)
+
+	un := &fakeUserNotifier{}
+	e := New(Config{ZmprovBin: filepath.Join(binDir, "zmprov"), UserNotifier: un})
+	e.suspendAccount(context.Background(), detection.Alert{
+		Account: "jalegre@sedachimbote.com.pe",
+		Module:  "number_messages",
+	})
+
+	if len(un.accounts) != 1 || un.accounts[0] != "jalegre@sedachimbote.com.pe" {
+		t.Errorf("aviso al usuario: got %v, want [jalegre@sedachimbote.com.pe]", un.accounts)
+	}
+}
+
+func TestSuspendAccountFallidaNoAvisaAlUsuario(t *testing.T) {
+	// zmprov que falla: la cuenta NO se suspendió, no debe enviarse el aviso.
+	dir := t.TempDir()
+	zmprov := filepath.Join(dir, "zmprov")
+	os.WriteFile(zmprov, []byte("#!/bin/sh\nexit 1\n"), 0755)
+
+	un := &fakeUserNotifier{}
+	e := New(Config{ZmprovBin: zmprov, UserNotifier: un})
+	e.suspendAccount(context.Background(), detection.Alert{
+		Account: "user@domain.com", Module: "test",
+	})
+
+	if len(un.accounts) != 0 {
+		t.Errorf("zmprov falló: no debe avisarse al usuario, got %v", un.accounts)
+	}
+}
+
+func TestSuspendAccountAvisoFallidoNoRompeSuspension(t *testing.T) {
+	binDir := setupFakeBin(t, "zmprov")
+	prependPath(t, binDir)
+
+	un := &fakeUserNotifier{fail: true}
+	e := New(Config{ZmprovBin: filepath.Join(binDir, "zmprov"), UserNotifier: un})
+	e.suspendAccount(context.Background(), detection.Alert{
+		Account: "user@domain.com", Module: "test",
+	})
+
+	// El fallo del aviso solo se loguea: la suspensión queda registrada igual.
 	if e.Stats().SuspensionsTotal != 1 {
 		t.Errorf("SuspensionsTotal: got %d, want 1", e.Stats().SuspensionsTotal)
 	}
@@ -268,6 +332,25 @@ func TestBlockManualIgnoraPaisPermitido(t *testing.T) {
 	})
 	if e.IsBlocked("190.40.1.1") {
 		t.Error("alerta automática de país permitido no debe bloquearse")
+	}
+}
+
+func TestBlockSobreviveContextoCancelado(t *testing.T) {
+	// Regresión: el contexto del request HTTP (timeout 10s del cliente) mataba
+	// firewall-cmd a mitad de camino en hosts con firewalld lento. El bloqueo
+	// manual debe completarse aunque el contexto del caller ya esté cancelado.
+	binDir := setupFakeBin(t, "firewall-cmd")
+	prependPath(t, binDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // el caller ya se rindió
+
+	e := New(Config{BanSeconds: 60})
+	if err := e.Block(ctx, "203.0.113.9", -1); err != nil {
+		t.Fatalf("Block con ctx cancelado: %v", err)
+	}
+	if !e.IsBlocked("203.0.113.9") {
+		t.Error("el bloqueo debe completarse aunque el contexto del request esté cancelado")
 	}
 }
 

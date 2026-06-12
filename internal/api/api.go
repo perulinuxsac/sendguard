@@ -119,10 +119,14 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("DELETE /whitelist/{value...}", s.requireKey(s.handleWhitelistRemove))
 
 	s.srv = &http.Server{
-		Addr:         addr,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		Addr:        addr,
+		Handler:     mux,
+		ReadTimeout: 5 * time.Second,
+		// WriteTimeout generoso: los bloqueos manuales esperan firewall-cmd,
+		// que en hosts con miles de rich rules tarda varios segundos por
+		// invocación (2 invocaciones si el ban es permanente). La API escucha
+		// solo en loopback, así que un timeout largo no expone nada.
+		WriteTimeout: 150 * time.Second,
 	}
 	return s
 }

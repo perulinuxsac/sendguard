@@ -179,13 +179,26 @@ func main() {
 		slog.Info("notificaciones webhook activadas", "url", whCfg.URL)
 	}
 	emailCfg := cfg.Notification.Email
-	if emailCfg.From != "" && len(emailCfg.To) > 0 {
-		notifiers = append(notifiers, email.New(email.Config{
-			From:        emailCfg.From,
-			To:          emailCfg.To,
-			SendmailBin: emailCfg.SendmailBin,
-		}))
+	var emailNotifier *email.Notifier
+	if emailCfg.From != "" {
+		emailNotifier = email.New(email.Config{
+			From:           emailCfg.From,
+			To:             emailCfg.To,
+			SendmailBin:    emailCfg.SendmailBin,
+			UserNoticeFrom: emailCfg.UserNoticeFrom,
+		})
+	}
+	if emailNotifier != nil && len(emailCfg.To) > 0 {
+		notifiers = append(notifiers, emailNotifier)
 		slog.Info("notificaciones email activadas", "from", emailCfg.From, "to", emailCfg.To)
+	}
+
+	// Aviso al usuario suspendido: solo necesita `from` (el destinatario es la
+	// propia cuenta comprometida), independiente de la lista de admins.
+	var userNotifier enforcement.UserNotifier
+	if emailNotifier != nil && emailCfg.NotifySuspendedUser {
+		userNotifier = emailNotifier
+		slog.Info("aviso de suspensión al usuario activado", "from", emailCfg.From)
 	}
 
 	// Throttle de notificaciones: cooldown por IP/cuenta + límite global por minuto.
@@ -301,6 +314,7 @@ func main() {
 		GeoResolver:      geoResolver,
 		AllowedCountries: cfg.GeoIP.AllowedCountries,
 		NotifyOnActions:  cfg.Notification.OnActions,
+		UserNotifier:     userNotifier,
 	})
 
 	// Restaurar bans activos de firewalld (resiliencia al reinicio)

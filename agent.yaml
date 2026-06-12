@@ -169,6 +169,14 @@ notification:
   #   to:
   #     - "noc@midominio.com"
   #   sendmail_bin: "/opt/zimbra/common/sbin/sendmail"
+  #   # Aviso AL PROPIO USUARIO cuando su cuenta es suspendida por compromiso
+  #   # (solo en suspend_account). El buzón locked sigue recibiendo correo; el
+  #   # usuario verá el aviso cuando le restablezcan la contraseña. Solo
+  #   # requiere `from` — funciona aunque `to` esté vacío.
+  #   notify_suspended_user: true
+  #   # Remitente del aviso al usuario y contacto del botón "Contactar al
+  #   # soporte" (vacío = usa `from`).
+  #   user_notice_from: "ti@perulinux.pe"
   # Throttle — evita floods de notificaciones durante ataques masivos.
   # cooldown_seconds: tiempo mínimo entre notificaciones del mismo IP o cuenta.
   # max_per_minute: límite total de notificaciones por minuto (todas las IPs).
