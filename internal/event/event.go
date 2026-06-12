@@ -34,7 +34,8 @@ type Event struct {
 
 	// Extra: campos adicionales según el tipo de evento
 	// AuthFailed: Extra["reason"] = motivo del fallo
-	// QueueAccepted: Extra["size"] = tamaño del mensaje, Extra["nrcpt"] = destinatarios
+	// QueueAccepted: Extra["size"] = tamaño, Extra["nrcpt"] = destinatarios,
+	//                Extra["from"] = MAIL FROM del sobre (puede diferir de Account si está falseado)
 	// MessageSent/Bounce/Deferred: Extra["to"] = destinatario, Extra["relay"] = relay
 	Extra map[string]string
 

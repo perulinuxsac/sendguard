@@ -400,6 +400,50 @@ func TestBounceCorrelation(t *testing.T) {
 	}
 }
 
+// TestSpoofedFromAttributedToSaslAccount verifica que cuando el MAIL FROM del
+// sobre no coincide con la cuenta SASL autenticada, los eventos se atribuyen a
+// la cuenta SASL. Regresión del incidente en webmail.perucloud.pe (Jun 2026):
+// una cuenta comprometida (jalegre@sedachimbote.com.pe) enviaba spam falseando
+// from=<leslie@usanpedro.edu.pe> (cuenta inexistente en el servidor); al
+// atribuirse al from falseado, number_messages alertaba/suspendía una cuenta
+// que no existía y la cuenta real seguía enviando.
+func TestSpoofedFromAttributedToSaslAccount(t *testing.T) {
+	p := parser.New()
+
+	// 1. Auth SASL como jalegre@sedachimbote.com.pe
+	authLine := `Jun 12 09:59:49 webmail postfix/submission/smtpd[3307999]: DE6DA601D3665C: client=unknown[200.25.47.116], sasl_method=LOGIN, sasl_username=jalegre@sedachimbote.com.pe`
+	if _, ok := p.ParseLine(authLine); !ok {
+		t.Fatal("auth line debe parsear ok")
+	}
+
+	// 2. qmgr con from FALSEADO (cuenta que no existe en el servidor)
+	qmgrLine := `Jun 12 09:59:50 webmail postfix/qmgr[100]: DE6DA601D3665C: from=<leslie@usanpedro.edu.pe>, size=4096, nrcpt=20 (queue active)`
+	qmgrEv, ok := p.ParseLine(qmgrLine)
+	if !ok {
+		t.Fatal("qmgr line debe parsear ok")
+	}
+	if qmgrEv.Account != "jalegre@sedachimbote.com.pe" {
+		t.Errorf("qmgr: Account got %q, want jalegre@sedachimbote.com.pe (cuenta SASL, no el from falseado)", qmgrEv.Account)
+	}
+	if qmgrEv.Domain != "sedachimbote.com.pe" {
+		t.Errorf("qmgr: Domain got %q, want sedachimbote.com.pe", qmgrEv.Domain)
+	}
+	if qmgrEv.Extra["from"] != "leslie@usanpedro.edu.pe" {
+		t.Errorf("qmgr: Extra[from] got %q, want leslie@usanpedro.edu.pe (sobre original preservado)", qmgrEv.Extra["from"])
+	}
+
+	// 3. Entrega externa — debe seguir atribuida a la cuenta SASL para que
+	// number_messages cuente contra la cuenta comprometida real.
+	sentLine := `Jun 12 09:59:52 webmail postfix/smtp[101]: DE6DA601D3665C: to=<avid.cheatham@ardenthealth.com>, relay=mx.ardenthealth.com[203.0.113.7]:25, delay=2, delays=0.1/0/0.3/1.6, dsn=2.0.0, status=sent (250 ok)`
+	sentEv, ok := p.ParseLine(sentLine)
+	if !ok {
+		t.Fatal("delivery line debe parsear ok")
+	}
+	if sentEv.Account != "jalegre@sedachimbote.com.pe" {
+		t.Errorf("sent: Account got %q, want jalegre@sedachimbote.com.pe (cuenta SASL, no el from falseado)", sentEv.Account)
+	}
+}
+
 // TestRecipientAddedCarriesSender verifica que los eventos RecipientAdded llevan
 // la cuenta del REMITENTE autenticado (sasl_username), no la del destinatario RCPT TO.
 // Regresión: antes ev.Account = m[3] capturaba el email del destinatario, lo que

@@ -352,18 +352,22 @@ func (p *Parser) parseQmgr(ev event.Event, msg string) (event.Event, bool) {
 		return event.Event{}, false
 	}
 
+	// Atribuir el mensaje a la cuenta SASL autenticada, NO al from=<> del sobre.
+	// El MAIL FROM es falseable: una cuenta comprometida puede enviar spam con un
+	// remitente que ni siquiera existe en el servidor (ej: auth como
+	// jalegre@dominio-a pero from=<leslie@dominio-b>), y la detección/suspensión
+	// debe caer sobre quien autenticó. El from del sobre queda en Extra["from"].
 	ev.Type = event.QueueAccepted
 	ev.QueueID = queueID
-	ev.Account = m[2]
-	ev.Domain = extractDomain(m[2])
+	ev.Account = authEntry.account
+	ev.Domain = extractDomain(authEntry.account)
 	ev.Extra = map[string]string{
 		"size":  m[3],
 		"nrcpt": m[4],
+		"from":  m[2],
 	}
-	// Guardar cuenta para correlacionar bounces posteriores en parseDelivery.
-	if m[2] != "" {
-		p.queueSenders[queueID] = senderEntry{account: m[2], ts: authEntry.ts}
-	}
+	// Guardar cuenta para correlacionar entregas y bounces posteriores en parseDelivery.
+	p.queueSenders[queueID] = senderEntry{account: authEntry.account, ts: authEntry.ts}
 	return ev, true
 }
 
