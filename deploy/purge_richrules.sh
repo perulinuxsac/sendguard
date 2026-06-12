@@ -3,10 +3,10 @@
 # bloqueo acumuladas por SendGuard (una por IP baneada) de la configuración
 # permanente de firewalld y recarga.
 #
-# Elimina SOLO reglas con el patrón exacto que generaba SendGuard:
+# Elimina SOLO reglas de bloqueo por IP con el patrón exacto:
 #   <rule family="ipv4">
 #     <source address="X.X.X.X[/nn]"/>
-#     <reject/>
+#     <reject/>   (SendGuard) — o —  <drop/>  (bans antiguos)
 #   </rule>
 # Cualquier regla con más atributos (puertos, servicios, log, limit...) se
 # conserva intacta. Se hace backup del XML antes de tocarlo.
@@ -18,6 +18,21 @@ set -euo pipefail
 
 if ! command -v firewall-cmd >/dev/null 2>&1; then
     echo "firewalld no presente en este host; nada que purgar." >&2
+    exit 0
+fi
+
+# Guarda crítica: en hosts donde ufw es el firewall activo (Ubuntu/Debian),
+# SendGuard usa el backend ufw y NO crea rich rules en firewalld. Si firewalld
+# está además instalado/activo (coexistencia), un `firewall-cmd --reload` aquí
+# recargaría las cadenas de iptables que ufw gestiona y cortaría la
+# comunicación. Este script es solo para hosts con backend firewalld.
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    echo "ufw activo: este host usa backend ufw, no se toca firewalld. Saliendo." >&2
+    exit 0
+fi
+
+if ! systemctl is-active --quiet firewalld; then
+    echo "firewalld no está activo; nada que purgar." >&2
     exit 0
 fi
 
@@ -40,9 +55,10 @@ awk '
 inrule {
     buf = buf "\n" $0
     if (/<\/rule>/) {
-        # Regla SendGuard: solo source address + reject, nada más.
-        if (buf ~ /<source address="[0-9.\/]+"\/>/ && buf ~ /<reject\/>/ &&
-            buf !~ /port|service|protocol|log|limit|accept|drop|mark|masquerade|forward|icmp/) {
+        # Regla de bloqueo por IP: solo source address + reject/drop, nada más.
+        if (buf ~ /<source address="[0-9.\/]+"\/>/ &&
+            (buf ~ /<reject\/>/ || buf ~ /<drop\/>/) &&
+            buf !~ /port|service|protocol|log|limit|accept|mark|masquerade|forward|icmp/) {
             # descartar
         } else {
             print buf
