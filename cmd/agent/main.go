@@ -198,7 +198,11 @@ func main() {
 	var userNotifier enforcement.UserNotifier
 	if emailNotifier != nil && emailCfg.NotifySuspendedUser {
 		userNotifier = emailNotifier
-		slog.Info("aviso de suspensión al usuario activado", "from", emailCfg.From)
+		noticeFrom := emailCfg.UserNoticeFrom
+		if noticeFrom == "" {
+			noticeFrom = emailCfg.From
+		}
+		slog.Info("aviso de suspensión al usuario activado", "from", noticeFrom)
 	}
 
 	// Throttle de notificaciones: cooldown por IP/cuenta + límite global por minuto.
