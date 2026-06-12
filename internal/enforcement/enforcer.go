@@ -333,8 +333,13 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 	// el bloqueo se omitió deliberadamente. La notificación sigue su curso desde
 	// handle(). Los módulos vacían su ventana al alertar, así que el re-logueo de
 	// esta línea queda acotado a un ciclo de umbral por IP, no por evento.
-	if e.isIPFromAllowedCountry(alert.IP) {
-		country := e.cfg.GeoResolver.Country(alert.IP)
+	//
+	// EXCEPCIÓN: los bloqueos manuales (sendguard-ctl/API) son una decisión
+	// explícita del administrador y no se vetan por país — en hosts con
+	// allowed_countries=[PE] un atacante con IPs peruanas quedaría imbloqueable
+	// y el ctl reportaría éxito sin haber hecho nada.
+	if alert.Module != "manual" && e.isIPFromAllowedCountry(alert.IP) {
+		country := e.cfg.GeoResolver.Country(baseIP(alert.IP))
 		slog.Info("enforcement: IP de país permitido, bloqueo de firewall omitido",
 			"ip", alert.IP, "country", country, "module", alert.Module)
 		return

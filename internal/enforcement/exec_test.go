@@ -243,6 +243,34 @@ func TestBlockCIDRPrivadoRetornaError(t *testing.T) {
 	}
 }
 
+func TestBlockManualIgnoraPaisPermitido(t *testing.T) {
+	// Regresión: en hosts con allowed_countries=[PE] el bloqueo manual de una
+	// IP o rango peruano se omitía silenciosamente (skip por GeoIP) y el ctl
+	// reportaba éxito sin haber bloqueado nada. El veto por país solo aplica
+	// a las alertas automáticas; lo manual es decisión explícita del admin.
+	binDir := setupFakeBin(t, "firewall-cmd")
+	prependPath(t, binDir)
+
+	srv := newGeoSrv(t, "PE")
+	e := New(Config{BanSeconds: 60, GeoResolver: srv, AllowedCountries: []string{"PE"}})
+
+	if err := e.Block(context.Background(), "200.25.47.0/24", -1); err != nil {
+		t.Fatalf("Block manual: %v", err)
+	}
+	if !e.IsBlocked("200.25.47.116") {
+		t.Error("bloqueo manual debe aplicarse aunque la IP sea de país permitido")
+	}
+
+	// Las alertas automáticas mantienen el skip por país permitido.
+	e.blockIP(context.Background(), detection.Alert{
+		IP: "190.40.1.1", Module: "authfailed",
+		Action: detection.ActionBlockIP, Timestamp: time.Now(),
+	})
+	if e.IsBlocked("190.40.1.1") {
+		t.Error("alerta automática de país permitido no debe bloquearse")
+	}
+}
+
 func TestBlockCIDRPersistidoYRestaurado(t *testing.T) {
 	binDir := setupFakeBin(t, "firewall-cmd")
 	prependPath(t, binDir)
