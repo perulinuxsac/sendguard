@@ -65,6 +65,7 @@ func (f *firewalldFW) ListBlockedIPs(ctx context.Context) ([]string, error) {
 }
 
 // buildFirewallCmds devuelve los conjuntos de argumentos de firewall-cmd a ejecutar.
+// ip acepta una dirección individual o un CIDR (las rich rules soportan ambos).
 // Temporal: un solo comando con --timeout.
 // Permanente: dos comandos — runtime (activo ahora) + permanent (sobrevive reload).
 func buildFirewallCmds(ip string, banSeconds int) [][]string {
@@ -79,7 +80,7 @@ func buildFirewallCmds(ip string, banSeconds int) [][]string {
 	}
 }
 
-// parseFirewallRule extrae la IP de una línea de `firewall-cmd --list-rich-rules`.
+// parseFirewallRule extrae la IP o el CIDR de una línea de `firewall-cmd --list-rich-rules`.
 // Soporta comillas dobles y simples (el formato varía según la versión de firewalld).
 // Retorna "" si la línea no corresponde a una regla SendGuard válida.
 func parseFirewallRule(line string) string {
@@ -94,7 +95,7 @@ func parseFirewallRule(line string) string {
 		if end == -1 {
 			continue
 		}
-		if ip := rest[:end]; isValidIP(ip) {
+		if ip := rest[:end]; ValidBlockTarget(ip) {
 			return ip
 		}
 	}
@@ -132,7 +133,7 @@ func (f *ufwFW) ListBlockedIPs(ctx context.Context) ([]string, error) {
 	return parseUFWStatus(out), nil
 }
 
-// parseUFWStatus extrae IPv4 de líneas "DENY IN" de `ufw status`.
+// parseUFWStatus extrae IPv4 o CIDRs de líneas "DENY IN" de `ufw status`.
 // Separado para facilitar tests sin necesitar el binario ufw.
 func parseUFWStatus(out []byte) []string {
 	var ips []string
@@ -142,11 +143,11 @@ func parseUFWStatus(out []byte) []string {
 		if !strings.Contains(line, "DENY IN") {
 			continue
 		}
-		// Formato: "Anywhere   DENY IN   1.2.3.4"
-		// La IP de origen es el primer campo que pase isValidIP (siempre al final).
+		// Formato: "Anywhere   DENY IN   1.2.3.4" (o "... 200.25.47.0/24")
+		// El origen es el primer campo que pase ValidBlockTarget (siempre al final).
 		fields := strings.Fields(line)
 		for _, f := range fields {
-			if isValidIP(f) {
+			if ValidBlockTarget(f) {
 				ips = append(ips, f)
 				break
 			}

@@ -9,8 +9,8 @@
 // Comandos:
 //
 //	status                        — muestra estado, IPs bloqueadas y contadores
-//	block   <ip>                  — bloquea una IP manualmente vía la API
-//	unblock <ip>                  — desbloquea una IP manualmente vía la API
+//	block   <ip|cidr>             — bloquea una IP o un rango CIDR manualmente vía la API
+//	unblock <ip|cidr>             — desbloquea una IP o un rango CIDR manualmente vía la API
 //	unsuspend <cuenta>            — rehabilita una cuenta suspendida vía la API
 //	health                        — verifica que el agente responde
 //	urban   <ip>                  — inteligencia de IP (AbuseIPDB + GeoIP)
@@ -43,8 +43,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Uso: sendguard-ctl [-addr URL] [-key KEY] <comando>\n\n")
 		fmt.Fprintf(os.Stderr, "Comandos:\n")
 		fmt.Fprintf(os.Stderr, "  status                      muestra IPs bloqueadas y contadores\n")
-		fmt.Fprintf(os.Stderr, "  block   [-permanent] <ip>   bloquea una IP manualmente\n")
-		fmt.Fprintf(os.Stderr, "  unblock <ip>                desbloquea una IP manualmente\n")
+		fmt.Fprintf(os.Stderr, "  block   [-permanent] <ip|cidr>  bloquea una IP o rango CIDR manualmente\n")
+		fmt.Fprintf(os.Stderr, "  unblock <ip|cidr>           desbloquea una IP o rango CIDR manualmente\n")
 		fmt.Fprintf(os.Stderr, "  unsuspend <cuenta>          rehabilita una cuenta suspendida\n")
 		fmt.Fprintf(os.Stderr, "  health                      verifica que el agente está vivo\n")
 		fmt.Fprintf(os.Stderr, "  urban   <ip>                inteligencia de IP (AbuseIPDB + GeoIP)\n")
@@ -83,12 +83,12 @@ func main() {
 		permanent := blockFlags.Bool("permanent", false, "bloquear sin expiración")
 		blockFlags.Parse(flag.Args()[1:])
 		if blockFlags.NArg() < 1 {
-			fatalf("block requiere una IP como argumento")
+			fatalf("block requiere una IP o CIDR como argumento")
 		}
 		err = cmdBlock(cli, blockFlags.Arg(0), *permanent)
 	case "unblock":
 		if flag.NArg() < 2 {
-			fatalf("unblock requiere una IP como argumento")
+			fatalf("unblock requiere una IP o CIDR como argumento")
 		}
 		err = cmdUnblock(cli, flag.Arg(1))
 	case "unsuspend":
@@ -222,7 +222,7 @@ func cmdBlock(cli *apiClient, ip string, permanent bool) error {
 	if err := cli.do(http.MethodPost, path, &body); err != nil {
 		return err
 	}
-	msg := fmt.Sprintf("IP bloqueada: %s", body["blocked"])
+	msg := fmt.Sprintf("IP/CIDR bloqueado: %s", body["blocked"])
 	if permanent {
 		msg += " (permanente)"
 	}
@@ -235,7 +235,7 @@ func cmdUnblock(cli *apiClient, ip string) error {
 	if err := cli.do(http.MethodDelete, "/blocked/"+ip, &body); err != nil {
 		return err
 	}
-	fmt.Printf("IP desbloqueada: %s\n", body["unblocked"])
+	fmt.Printf("IP/CIDR desbloqueado: %s\n", body["unblocked"])
 	return nil
 }
 

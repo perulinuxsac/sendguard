@@ -89,7 +89,8 @@ type Enforcer struct {
 	cfg            Config
 	fw             fw
 	mu             sync.Mutex
-	blockedIPs     map[string]blockedIP
+	blockedIPs     map[string]blockedIP  // clave: IP o CIDR bloqueado
+	blockedNets    map[string]*net.IPNet // solo entradas CIDR de blockedIPs, parseadas para Contains()
 	suspendedAccts map[string]suspendedAcct
 	blocksTotal    atomic.Int64
 	suspsTotal     atomic.Int64
@@ -105,6 +106,7 @@ func New(cfg Config) *Enforcer {
 		cfg:            cfg,
 		fw:             newFW(cfg.FirewallBackend),
 		blockedIPs:     make(map[string]blockedIP),
+		blockedNets:    make(map[string]*net.IPNet),
 		suspendedAccts: make(map[string]suspendedAcct),
 	}
 }
@@ -154,6 +156,7 @@ func (e *Enforcer) unbanExpired(ctx context.Context) {
 		if now.After(entry.expiry) {
 			expired = append(expired, ip)
 			delete(e.blockedIPs, ip)
+			delete(e.blockedNets, ip)
 		}
 	}
 	e.mu.Unlock()
@@ -304,18 +307,21 @@ func (e *Enforcer) blockIP(ctx context.Context, alert detection.Alert) {
 	e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds)
 }
 
-// blockIPWithTTL bloquea una IP con un TTL explícito (0 = permanente).
+// blockIPWithTTL bloquea una IP o un CIDR con un TTL explícito (0 = permanente).
 func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, banSecs int) {
-	if !isValidIP(alert.IP) {
-		slog.Error("enforcement: IP inválida, no se bloqueará", "ip", alert.IP)
+	if !ValidBlockTarget(alert.IP) {
+		slog.Error("enforcement: IP/CIDR inválido, no se bloqueará", "ip", alert.IP)
 		return
 	}
+	// Canonicalizar CIDRs ("200.25.47.5/24" → "200.25.47.0/24") para que la
+	// deduplicación, el firewall y el unblock posterior usen la misma clave.
+	alert.IP = normalizeTarget(alert.IP)
 
 	// Las redes privadas (RFC 1918), loopback y link-local nunca se bloquean:
 	// son tráfico interno (proxy Zimbra, webmail, oficina) y un ban aquí puede
 	// dejar fuera de servicio el propio mail server. Aplica también a los
 	// bloqueos manuales vía API y al ban de IP que acompaña a suspend_account.
-	if isPrivateIP(alert.IP) {
+	if isPrivateIP(baseIP(alert.IP)) {
 		slog.Warn("enforcement: IP privada/local, bloqueo de firewall omitido",
 			"ip", alert.IP, "module", alert.Module)
 		return
@@ -347,6 +353,9 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		expiry = time.Now().Add(100 * 365 * 24 * time.Hour)
 	}
 	e.blockedIPs[alert.IP] = blockedIP{expiry: expiry, module: alert.Module}
+	if _, ipnet, err := net.ParseCIDR(alert.IP); err == nil {
+		e.blockedNets[alert.IP] = ipnet
+	}
 	e.mu.Unlock()
 
 	// Persistir antes de ejecutar el comando para no perder el registro
@@ -357,7 +366,8 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		}
 	}
 
-	if e.cfg.AbuseIPDB != nil {
+	// AbuseIPDB solo indexa IPs individuales; para CIDRs se omite la consulta.
+	if e.cfg.AbuseIPDB != nil && !isCIDR(alert.IP) {
 		if report, err := e.cfg.AbuseIPDB.Check(ctx, alert.IP); err == nil {
 			if alert.Country == "" {
 				alert.Country = report.CountryCode
@@ -374,6 +384,7 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		slog.Error("enforcement: fallo al bloquear IP", "ip", alert.IP, "error", err)
 		e.mu.Lock()
 		delete(e.blockedIPs, alert.IP)
+		delete(e.blockedNets, alert.IP)
 		e.mu.Unlock()
 		if e.cfg.Store != nil {
 			e.cfg.Store.DeleteBan(alert.IP)
@@ -437,6 +448,44 @@ func isValidIP(ip string) bool {
 	return parsed != nil && parsed.To4() != nil
 }
 
+// isCIDR retorna true si el target lleva máscara ("200.25.47.0/24").
+func isCIDR(target string) bool {
+	return strings.ContainsRune(target, '/')
+}
+
+// ValidBlockTarget acepta como objetivo de bloqueo una IPv4 ("1.2.3.4") o un
+// CIDR IPv4 ("200.25.47.0/24"). Exportado para que la API valide el input
+// antes de llamar a Block/Unblock.
+func ValidBlockTarget(target string) bool {
+	if isCIDR(target) {
+		ip, _, err := net.ParseCIDR(target)
+		return err == nil && ip.To4() != nil
+	}
+	return isValidIP(target)
+}
+
+// normalizeTarget canonicaliza un CIDR a su dirección de red
+// ("200.25.47.5/24" → "200.25.47.0/24"); las IPs sueltas no cambian.
+func normalizeTarget(target string) string {
+	if !isCIDR(target) {
+		return target
+	}
+	if _, ipnet, err := net.ParseCIDR(target); err == nil {
+		return ipnet.String()
+	}
+	return target
+}
+
+// baseIP retorna la parte de dirección de un target: la IP misma, o la
+// dirección base si es un CIDR. Útil para GeoIP y chequeos de red privada,
+// que operan sobre direcciones individuales.
+func baseIP(target string) string {
+	if i := strings.IndexByte(target, '/'); i >= 0 {
+		return target[:i]
+	}
+	return target
+}
+
 // isPrivateIP retorna true si la IP es privada (RFC 1918), loopback o link-local.
 // Estas IPs jamás deben terminar en una regla de bloqueo del firewall.
 func isPrivateIP(ip string) bool {
@@ -454,25 +503,54 @@ type BlockedIPInfo struct {
 	Module string
 }
 
-// IsBlocked retorna true si la IP está actualmente bloqueada y el ban no ha expirado.
-// O(1) — diseñado para ser llamado con alta frecuencia (policy daemon).
+// IsBlocked retorna true si la IP está actualmente bloqueada y el ban no ha
+// expirado, ya sea por bloqueo directo o por pertenecer a un CIDR bloqueado.
+// O(1) en el caso común (lookup exacto); el barrido de CIDRs solo ocurre si
+// hay rangos bloqueados, que en la práctica son pocos (bloqueos manuales).
 func (e *Enforcer) IsBlocked(ip string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	entry, ok := e.blockedIPs[ip]
-	return ok && time.Now().Before(entry.expiry)
+	now := time.Now()
+	if entry, ok := e.blockedIPs[ip]; ok && now.Before(entry.expiry) {
+		return true
+	}
+	return e.blockingNetLocked(ip, now) != ""
 }
 
-// GetBlockedIP retorna los detalles de una IP bloqueada en O(1).
+// GetBlockedIP retorna los detalles de una IP bloqueada (directa o dentro de
+// un CIDR bloqueado; en ese caso el campo IP de la respuesta es el CIDR).
 // El segundo valor es false si la IP no está bloqueada o el ban expiró.
 func (e *Enforcer) GetBlockedIP(ip string) (BlockedIPInfo, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	entry, ok := e.blockedIPs[ip]
-	if !ok || !time.Now().Before(entry.expiry) {
-		return BlockedIPInfo{}, false
+	now := time.Now()
+	if entry, ok := e.blockedIPs[ip]; ok && now.Before(entry.expiry) {
+		return BlockedIPInfo{IP: ip, Expiry: entry.expiry, Module: entry.module}, true
 	}
-	return BlockedIPInfo{IP: ip, Expiry: entry.expiry, Module: entry.module}, true
+	if cidr := e.blockingNetLocked(ip, now); cidr != "" {
+		entry := e.blockedIPs[cidr]
+		return BlockedIPInfo{IP: cidr, Expiry: entry.expiry, Module: entry.module}, true
+	}
+	return BlockedIPInfo{}, false
+}
+
+// blockingNetLocked retorna el CIDR bloqueado (no expirado) que contiene a ip,
+// o "" si ninguno. Debe llamarse con e.mu tomado.
+func (e *Enforcer) blockingNetLocked(ip string, now time.Time) string {
+	if len(e.blockedNets) == 0 {
+		return ""
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ""
+	}
+	for cidr, ipnet := range e.blockedNets {
+		entry, ok := e.blockedIPs[cidr]
+		if ok && now.Before(entry.expiry) && ipnet.Contains(parsed) {
+			return cidr
+		}
+	}
+	return ""
 }
 
 // BlockedIPs retorna una copia de las IPs actualmente bloqueadas (no expiradas).
@@ -547,6 +625,9 @@ func (e *Enforcer) loadBansFromStore() (int, bool) {
 	for _, b := range bans {
 		if _, exists := e.blockedIPs[b.IP]; !exists {
 			e.blockedIPs[b.IP] = blockedIP{expiry: b.ExpiresAt, module: b.Module}
+			if _, ipnet, err := net.ParseCIDR(b.IP); err == nil {
+				e.blockedNets[b.IP] = ipnet
+			}
 			loaded++
 			if e.cfg.Whitelist != nil {
 				_ = e.cfg.Whitelist.AddIP(b.IP)
@@ -583,6 +664,9 @@ func (e *Enforcer) loadBansFromFirewalld(ctx context.Context) {
 				expiry = now.Add(100 * 365 * 24 * time.Hour)
 			}
 			e.blockedIPs[ip] = blockedIP{expiry: expiry, module: "restored"}
+			if _, ipnet, err := net.ParseCIDR(ip); err == nil {
+				e.blockedNets[ip] = ipnet
+			}
 			loaded++
 			if e.cfg.Whitelist != nil {
 				_ = e.cfg.Whitelist.AddIP(ip)
@@ -596,17 +680,17 @@ func (e *Enforcer) loadBansFromFirewalld(ctx context.Context) {
 	}
 }
 
-// Block bloquea manualmente una IP vía la API (sin pasar por el Engine).
+// Block bloquea manualmente una IP o un CIDR vía la API (sin pasar por el Engine).
 // ttlOverride controla la duración:
 //   - 0  → usa BanSeconds del config
 //   - -1 → permanente (sin expiración)
 //   - >0 → duración en segundos
 func (e *Enforcer) Block(ctx context.Context, ip string, ttlOverride int) error {
-	if !isValidIP(ip) {
-		return fmt.Errorf("IP inválida: %s", ip)
+	if !ValidBlockTarget(ip) {
+		return fmt.Errorf("IP/CIDR inválido: %s", ip)
 	}
-	if isPrivateIP(ip) {
-		return fmt.Errorf("IP privada/local, no se bloquea: %s", ip)
+	if isPrivateIP(baseIP(ip)) {
+		return fmt.Errorf("IP/red privada o local, no se bloquea: %s", ip)
 	}
 
 	banSecs := e.cfg.BanSeconds
@@ -659,14 +743,16 @@ func (e *Enforcer) Unsuspend(ctx context.Context, account string) error {
 	return nil
 }
 
-// Unblock elimina una IP del mapa interno y la desbloquea en el firewall.
+// Unblock elimina una IP o un CIDR del mapa interno y lo desbloquea en el firewall.
 func (e *Enforcer) Unblock(ctx context.Context, ip string) error {
-	if !isValidIP(ip) {
-		return fmt.Errorf("IP inválida: %s", ip)
+	if !ValidBlockTarget(ip) {
+		return fmt.Errorf("IP/CIDR inválido: %s", ip)
 	}
+	ip = normalizeTarget(ip)
 
 	e.mu.Lock()
 	delete(e.blockedIPs, ip)
+	delete(e.blockedNets, ip)
 	e.mu.Unlock()
 
 	if e.cfg.Store != nil {
@@ -697,11 +783,12 @@ func (e *Enforcer) Unblock(ctx context.Context, ip string) error {
 
 // isIPFromAllowedCountry retorna true si la IP no está vacía, GeoResolver está
 // configurado, y el país de la IP aparece en AllowedCountries.
+// Para CIDRs se evalúa la dirección base del rango.
 func (e *Enforcer) isIPFromAllowedCountry(ip string) bool {
 	if ip == "" || len(e.cfg.AllowedCountries) == 0 || e.cfg.GeoResolver == nil {
 		return false
 	}
-	country := e.cfg.GeoResolver.Country(ip)
+	country := e.cfg.GeoResolver.Country(baseIP(ip))
 	if country == "" {
 		return false
 	}

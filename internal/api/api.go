@@ -13,8 +13,8 @@
 //
 // Endpoints protegidos (requieren X-Api-Key si está configurada):
 //
-//	POST   /blocked/{ip}        — bloquear IP manualmente
-//	DELETE /blocked/{ip}        — desbloquear IP manualmente
+//	POST   /blocked/{ip}        — bloquear IP o CIDR manualmente
+//	DELETE /blocked/{ip}        — desbloquear IP o CIDR manualmente
 //	DELETE /suspended/{account} — rehabilitar una cuenta Zimbra suspendida
 //	POST   /whitelist/{value}   — agregar IP/CIDR o cuenta a la whitelist
 //	DELETE /whitelist/{value}   — eliminar IP/CIDR o cuenta de la whitelist
@@ -106,8 +106,12 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /domains", s.handleDomains)
 	mux.HandleFunc("GET /whitelist", s.handleWhitelistGet)
 	mux.HandleFunc("GET /blocked/{ip}", s.handleBlockedCheck)
-	mux.HandleFunc("DELETE /blocked/{ip}", s.requireKey(s.handleUnblock))
-	mux.HandleFunc("POST /blocked/{ip}", s.requireKey(s.handleBlock))
+	// {ip...} (wildcard multi-segmento) para aceptar CIDRs, que contienen "/":
+	// con {ip} a secas, POST /blocked/200.25.47.0/24 no matchearía (404).
+	// El GET se mantiene en {ip}: el policy daemon consulta IPs individuales
+	// (la pertenencia a un CIDR bloqueado la resuelve GetBlockedIP).
+	mux.HandleFunc("DELETE /blocked/{ip...}", s.requireKey(s.handleUnblock))
+	mux.HandleFunc("POST /blocked/{ip...}", s.requireKey(s.handleBlock))
 	mux.HandleFunc("DELETE /suspended/{account}", s.requireKey(s.handleUnsuspend))
 	// {value...} (wildcard multi-segmento) para aceptar CIDRs, que contienen "/":
 	// con {value} a secas, POST /whitelist/10.0.0.0/8 no matchearía (404).
@@ -293,9 +297,8 @@ func (s *Server) handleBlockedCheck(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUnblock(w http.ResponseWriter, r *http.Request) {
 	ip := r.PathValue("ip")
-	parsed := net.ParseIP(ip)
-	if parsed == nil || parsed.To4() == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "se requiere IPv4 válida"})
+	if !enforcement.ValidBlockTarget(ip) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "se requiere IPv4 o CIDR IPv4 válido"})
 		return
 	}
 	if err := s.deps.Enforcer.Unblock(r.Context(), ip); err != nil {
@@ -320,9 +323,8 @@ func (s *Server) handleUnsuspend(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBlock(w http.ResponseWriter, r *http.Request) {
 	ip := r.PathValue("ip")
-	parsed := net.ParseIP(ip)
-	if parsed == nil || parsed.To4() == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "se requiere IPv4 válida"})
+	if !enforcement.ValidBlockTarget(ip) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "se requiere IPv4 o CIDR IPv4 válido"})
 		return
 	}
 

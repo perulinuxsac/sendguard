@@ -33,6 +33,55 @@ func TestIsValidIPRechazaInvalidas(t *testing.T) {
 	}
 }
 
+// --- ValidBlockTarget / normalizeTarget / baseIP ---
+
+func TestValidBlockTarget(t *testing.T) {
+	valid := []string{"1.2.3.4", "200.25.47.0/24", "200.25.47.116/24", "8.8.8.8/32", "0.0.0.0/0"}
+	for _, target := range valid {
+		if !ValidBlockTarget(target) {
+			t.Errorf("ValidBlockTarget(%q): got false, want true", target)
+		}
+	}
+	invalid := []string{
+		"",
+		"not-an-ip",
+		"1.2.3.0/33",    // máscara fuera de rango
+		"1.2.3.0/",      // máscara vacía
+		"/24",           // sin dirección
+		"2001:db8::/32", // IPv6
+		"1.2.3.4/24/8",  // doble máscara
+		"256.0.0.0/24",  // octeto fuera de rango
+	}
+	for _, target := range invalid {
+		if ValidBlockTarget(target) {
+			t.Errorf("ValidBlockTarget(%q): got true, want false", target)
+		}
+	}
+}
+
+func TestNormalizeTarget(t *testing.T) {
+	cases := map[string]string{
+		"1.2.3.4":          "1.2.3.4",        // IP suelta: sin cambios
+		"200.25.47.116/24": "200.25.47.0/24", // bits de host → dirección de red
+		"200.25.47.0/24":   "200.25.47.0/24", // ya canónico
+		"10.20.30.40/8":    "10.0.0.0/8",
+	}
+	for in, want := range cases {
+		if got := normalizeTarget(in); got != want {
+			t.Errorf("normalizeTarget(%q): got %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBaseIP(t *testing.T) {
+	if got := baseIP("200.25.47.0/24"); got != "200.25.47.0" {
+		t.Errorf("baseIP CIDR: got %q, want 200.25.47.0", got)
+	}
+	if got := baseIP("1.2.3.4"); got != "1.2.3.4" {
+		t.Errorf("baseIP IP: got %q, want 1.2.3.4", got)
+	}
+}
+
 // --- buildFirewallCmds ---
 
 func TestBuildFirewallCmdsTemporal(t *testing.T) {
@@ -90,6 +139,22 @@ func TestBuildFirewallCmdsContieneIP(t *testing.T) {
 	}
 }
 
+func TestBuildFirewallCmdsCIDR(t *testing.T) {
+	cmds := buildFirewallCmds("200.25.47.0/24", 0)
+	want := "--add-rich-rule=rule family='ipv4' source address='200.25.47.0/24' reject"
+	for _, args := range cmds {
+		found := false
+		for _, a := range args {
+			if a == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("comando no contiene la regla con el CIDR: %v", args)
+		}
+	}
+}
+
 // --- parseFirewallRule ---
 
 func TestParseFirewallRuleValida(t *testing.T) {
@@ -131,6 +196,13 @@ func TestParseFirewallRuleIPInvalida(t *testing.T) {
 	line := `rule family="ipv4" source address="not-an-ip" reject`
 	if got := parseFirewallRule(line); got != "" {
 		t.Errorf("IP inválida: got %q, want \"\"", got)
+	}
+}
+
+func TestParseFirewallRuleCIDR(t *testing.T) {
+	line := `rule family="ipv4" source address="200.25.47.0/24" reject`
+	if got := parseFirewallRule(line); got != "200.25.47.0/24" {
+		t.Errorf("CIDR: got %q, want 200.25.47.0/24", got)
 	}
 }
 

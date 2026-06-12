@@ -233,8 +233,8 @@ sendguard-ctl [-addr http://127.0.0.1:9099] [-key <api-key>] <command>
 
 Commands:
   status                      show blocked IPs and counters
-  block   <ip>                manually block an IP
-  unblock <ip>                manually unblock an IP
+  block   [-permanent] <ip|cidr>  manually block an IP or CIDR range
+  unblock <ip|cidr>           manually unblock an IP or CIDR range
   unsuspend <account>         unsuspend a Zimbra account
   health                      verify the agent is alive
   urban   <ip>                IP intelligence (AbuseIPDB + GeoIP)

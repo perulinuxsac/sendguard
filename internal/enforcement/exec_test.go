@@ -169,6 +169,101 @@ func TestUnblock_Valid(t *testing.T) {
 	}
 }
 
+// ── Block / Unblock con CIDR ─────────────────────────────────────────────────
+
+func TestBlockCIDR(t *testing.T) {
+	binDir := setupFakeBin(t, "firewall-cmd")
+	prependPath(t, binDir)
+
+	e := New(Config{BanSeconds: 60})
+	if err := e.Block(context.Background(), "200.25.47.0/24", -1); err != nil {
+		t.Fatalf("Block CIDR: %v", err)
+	}
+
+	blocked := e.BlockedIPs()
+	if len(blocked) != 1 || blocked[0].IP != "200.25.47.0/24" {
+		t.Fatalf("Block CIDR: blockedIPs = %v, want [200.25.47.0/24]", blocked)
+	}
+
+	// El policy daemon consulta IPs individuales: deben matchear contra el rango.
+	for _, ip := range []string{"200.25.47.116", "200.25.47.1", "200.25.47.254"} {
+		if !e.IsBlocked(ip) {
+			t.Errorf("IsBlocked(%s): got false, want true (dentro de 200.25.47.0/24)", ip)
+		}
+		info, ok := e.GetBlockedIP(ip)
+		if !ok || info.IP != "200.25.47.0/24" {
+			t.Errorf("GetBlockedIP(%s): got (%v, %v), want CIDR 200.25.47.0/24", ip, info, ok)
+		}
+	}
+	if e.IsBlocked("200.25.48.1") {
+		t.Error("IsBlocked(200.25.48.1): got true, want false (fuera del rango)")
+	}
+}
+
+func TestBlockCIDRNormalizado(t *testing.T) {
+	binDir := setupFakeBin(t, "firewall-cmd")
+	prependPath(t, binDir)
+
+	e := New(Config{BanSeconds: 60})
+	// La dirección con bits de host ("...47.116/24") debe canonicalizarse a la red.
+	if err := e.Block(context.Background(), "200.25.47.116/24", 0); err != nil {
+		t.Fatalf("Block CIDR sin normalizar: %v", err)
+	}
+	blocked := e.BlockedIPs()
+	if len(blocked) != 1 || blocked[0].IP != "200.25.47.0/24" {
+		t.Fatalf("normalización: blockedIPs = %v, want [200.25.47.0/24]", blocked)
+	}
+}
+
+func TestUnblockCIDR(t *testing.T) {
+	binDir := setupFakeBin(t, "firewall-cmd")
+	prependPath(t, binDir)
+
+	e := New(Config{BanSeconds: 60})
+	if err := e.Block(context.Background(), "203.0.113.0/24", -1); err != nil {
+		t.Fatalf("Block: %v", err)
+	}
+	if err := e.Unblock(context.Background(), "203.0.113.0/24"); err != nil {
+		t.Fatalf("Unblock CIDR: %v", err)
+	}
+	if len(e.BlockedIPs()) != 0 {
+		t.Error("Unblock CIDR: el rango debe eliminarse de blockedIPs")
+	}
+	if e.IsBlocked("203.0.113.5") {
+		t.Error("IsBlocked tras Unblock: got true, want false")
+	}
+}
+
+func TestBlockCIDRPrivadoRetornaError(t *testing.T) {
+	e := New(Config{BanSeconds: 60})
+	for _, cidr := range []string{"192.168.0.0/16", "10.0.0.0/8", "127.0.0.0/8"} {
+		if err := e.Block(context.Background(), cidr, 0); err == nil {
+			t.Errorf("Block(%s): debe rechazar redes privadas/locales", cidr)
+		}
+	}
+}
+
+func TestBlockCIDRPersistidoYRestaurado(t *testing.T) {
+	binDir := setupFakeBin(t, "firewall-cmd")
+	prependPath(t, binDir)
+
+	s, _ := store.Open(":memory:")
+	defer s.Close()
+
+	e := New(Config{BanSeconds: 3600, Store: s})
+	if err := e.Block(context.Background(), "198.51.100.0/24", -1); err != nil {
+		t.Fatalf("Block: %v", err)
+	}
+
+	// Simular reinicio del agente: un Enforcer nuevo restaura desde SQLite
+	// y debe reconstruir también el matching por rango.
+	e2 := New(Config{BanSeconds: 3600, Store: s})
+	e2.LoadExistingBans(context.Background())
+	if !e2.IsBlocked("198.51.100.77") {
+		t.Error("tras restaurar de SQLite: IP del rango debe seguir bloqueada")
+	}
+}
+
 func TestUnblockEliminaDelStore(t *testing.T) {
 	binDir := setupFakeBin(t, "firewall-cmd")
 	prependPath(t, binDir)

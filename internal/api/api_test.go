@@ -284,6 +284,44 @@ func TestBlockIPInvalida(t *testing.T) {
 	}
 }
 
+func TestBlockCIDRValido(t *testing.T) {
+	// El "/" del CIDR viaja en el path: la ruta {ip...} debe matchear y
+	// la validación aceptar el rango completo.
+	enf := &mockEnforcer{}
+	srv := newTestServer(enf, &mockEngine{})
+	rr := do(t, srv, http.MethodPost, "/blocked/200.25.47.0/24")
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rr.Code)
+	}
+	if enf.blockCalled != "200.25.47.0/24" {
+		t.Errorf("Block llamado con %q, want 200.25.47.0/24", enf.blockCalled)
+	}
+}
+
+func TestBlockCIDRInvalido(t *testing.T) {
+	srv := newTestServer(&mockEnforcer{}, &mockEngine{})
+	rr := do(t, srv, http.MethodPost, "/blocked/200.25.47.0/33")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("CIDR con máscara inválida: got %d, want 400", rr.Code)
+	}
+}
+
+func TestUnblockCIDRValido(t *testing.T) {
+	enf := &mockEnforcer{}
+	srv := newTestServer(enf, &mockEngine{})
+	rr := do(t, srv, http.MethodDelete, "/blocked/200.25.47.0/24")
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rr.Code)
+	}
+	var body map[string]string
+	json.NewDecoder(rr.Body).Decode(&body)
+	if body["unblocked"] != "200.25.47.0/24" {
+		t.Errorf("respuesta unblocked: got %q, want 200.25.47.0/24", body["unblocked"])
+	}
+}
+
 // --- Autenticación con API key ---
 
 func TestRequireKeyConKeyCorrecta(t *testing.T) {

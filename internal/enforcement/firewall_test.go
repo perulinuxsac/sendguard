@@ -77,6 +77,18 @@ Anywhere (v6)              DENY IN     ::1
 	}
 }
 
+func TestParseUFWStatusCIDR(t *testing.T) {
+	out := []byte(`Status: active
+
+Anywhere                   DENY IN     200.25.47.0/24
+Anywhere                   DENY IN     1.2.3.4
+`)
+	ips := parseUFWStatus(out)
+	if len(ips) != 2 || ips[0] != "200.25.47.0/24" || ips[1] != "1.2.3.4" {
+		t.Errorf("CIDR en ufw status: got %v, want [200.25.47.0/24 1.2.3.4]", ips)
+	}
+}
+
 // ── blockIP con backend ufw ───────────────────────────────────────────────────
 
 func TestBlockIPConUFWBackend(t *testing.T) {
