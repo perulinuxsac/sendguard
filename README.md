@@ -197,7 +197,7 @@ The pipeline is fully asynchronous. Each watcher goroutine writes events to a bu
 
 ## REST API
 
-The agent exposes an HTTP API on `127.0.0.1:9099` (configurable). Protected endpoints require `X-Api-Key` when `api.api_key` is set. Both `install.sh` and the Ansible role generate a random key automatically (kept in `/etc/sendguard/api.key`) so write endpoints are never left open to arbitrary local processes; the agent logs a warning at startup if the API runs without a key.
+The agent exposes an HTTP API on `127.0.0.1:9099` (configurable). Protected endpoints require `X-Api-Key` when `api.api_key` is set. Both `install.sh` and the Ansible role generate a random key automatically (kept in `/etc/sendguard/api.key`, mode 0600) so write endpoints are never left open to arbitrary local processes; the agent logs a warning at startup if the API runs without a key. `sendguard-ctl` picks the key up automatically from `-key`, `$SENDGUARD_API_KEY`, or `/etc/sendguard/api.key` (in that order), so running it as root needs no extra flags.
 
 ### Read-only endpoints
 

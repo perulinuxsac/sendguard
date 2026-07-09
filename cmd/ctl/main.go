@@ -6,6 +6,11 @@
 //
 //	sendguard-ctl [-addr http://127.0.0.1:9099] [-key <api-key>] <comando>
 //
+// Los comandos de escritura (block/unblock/unsuspend/whitelist add/remove)
+// requieren la API key del agente. Si no se pasa -key, se toma de la variable
+// de entorno SENDGUARD_API_KEY o, en su defecto, de /etc/sendguard/api.key
+// (legible solo por root), por lo que como root no hace falta pasarla.
+//
 // Comandos:
 //
 //	status                        — muestra estado, IPs bloqueadas y contadores
@@ -37,7 +42,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", "http://127.0.0.1:9099", "dirección de la API del agente")
-	key := flag.String("key", "", "API key (header X-Api-Key)")
+	key := flag.String("key", "", "API key (header X-Api-Key; default: $SENDGUARD_API_KEY o /etc/sendguard/api.key)")
 	showVersion := flag.Bool("version", false, "muestra la versión y termina")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Uso: sendguard-ctl [-addr URL] [-key KEY] <comando>\n\n")
@@ -71,7 +76,7 @@ func main() {
 
 	// Timeout amplio: block/unblock esperan a firewall-cmd, que en hosts con
 	// miles de rich rules tarda varios segundos por invocación.
-	cli := &apiClient{baseURL: *addr, apiKey: *key, http: &http.Client{Timeout: 150 * time.Second}}
+	cli := &apiClient{baseURL: *addr, apiKey: resolveAPIKey(*key), http: &http.Client{Timeout: 150 * time.Second}}
 	cmd := flag.Arg(0)
 
 	var err error
@@ -135,6 +140,23 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// resolveAPIKey determina la API key a usar: el flag -key manda; si está vacío
+// se toma SENDGUARD_API_KEY del entorno y, en su defecto, /etc/sendguard/api.key
+// (0600 root — que root no tenga que pasar la clave a mano no debilita nada,
+// porque cualquier otro usuario no puede leer el archivo).
+func resolveAPIKey(flagKey string) string {
+	if flagKey != "" {
+		return flagKey
+	}
+	if k := os.Getenv("SENDGUARD_API_KEY"); k != "" {
+		return k
+	}
+	if b, err := os.ReadFile("/etc/sendguard/api.key"); err == nil {
+		return strings.TrimSpace(string(b))
+	}
+	return ""
 }
 
 // --- comandos existentes ---
@@ -445,7 +467,7 @@ func (c *apiClient) do(method, path string, out any) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("acceso denegado (401) — usa -key para pasar la API key")
+		return fmt.Errorf("acceso denegado (401) — usa -key o verifica /etc/sendguard/api.key (requiere root)")
 	}
 	if resp.StatusCode == http.StatusServiceUnavailable {
 		var errBody map[string]string

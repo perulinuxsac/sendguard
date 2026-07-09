@@ -583,8 +583,9 @@ echo "    sendguard-ctl -addr http://$API_ADDR status         # estado + IPs blo
 echo "    sendguard-ctl -addr http://$API_ADDR whitelist list # whitelist activa"
 echo ""
 echo "  Los comandos de escritura (block/unblock/unsuspend/whitelist add) requieren"
-echo "  la API key generada (guardada en /etc/sendguard/api.key):"
-echo "    sendguard-ctl -key \"\$(cat /etc/sendguard/api.key)\" block <ip>"
+echo "  la API key generada (guardada en /etc/sendguard/api.key). Como root,"
+echo "  sendguard-ctl la lee de ahí automáticamente:"
+echo "    sendguard-ctl block <ip>"
 echo ""
 [[ -n "$CTRL_URL" ]] \
     && echo "  Controller: $CTRL_URL" \

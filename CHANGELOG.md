@@ -32,8 +32,15 @@ Correcciones surgidas de una auditoría de código interna.
   del host. Ahora `install.sh` y el rol de Ansible generan una clave
   aleatoria por host (persistida en `/etc/sendguard/api.key`, modo 0600,
   reutilizada en upgrades y redeploys) y la escriben en `api.api_key`. El
-  agente advierte al arrancar si la API corre sin clave. Uso con el ctl:
-  `sendguard-ctl -key "$(cat /etc/sendguard/api.key)" block <ip>`.
+  agente advierte al arrancar si la API corre sin clave.
+- `sendguard-ctl` resuelve la API key automáticamente: `-key` >
+  `$SENDGUARD_API_KEY` > `/etc/sendguard/api.key`. Como root los comandos de
+  escritura funcionan sin flags (`sendguard-ctl block <ip>`); el archivo es
+  0600 root, así que ningún otro usuario local hereda ese acceso.
+- El rol de Ansible escribe siempre la clave efectiva en
+  `/etc/sendguard/api.key`, también cuando se fija una clave de flota con
+  `sendguard_api_key` (antes en ese caso el archivo no se creaba o quedaba
+  con una clave autogenerada vieja, rompiendo el flujo del ctl).
 - La comparación de la API key usa `crypto/subtle.ConstantTimeCompare`
   (antes `!=`, susceptible de timing attack si la API se expone fuera de
   loopback).

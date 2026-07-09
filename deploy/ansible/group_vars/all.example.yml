@@ -38,8 +38,9 @@ sendguard_notify_on_actions:
 # sendguard_controller_api_key: "..."
 
 # API key de la API local del agente (endpoints de escritura del ctl).
-# Vacío (default) = el rol genera una clave aleatoria POR HOST en
-# /etc/sendguard/api.key y la reutiliza en cada redeploy — recomendado.
-# Solo define un valor aquí si necesitas una clave uniforme en la flota
-# (cífrala con ansible-vault).
+# Vacío (default) = el rol genera una clave aleatoria POR HOST y la reutiliza
+# en cada redeploy — recomendado. Solo define un valor aquí si necesitas una
+# clave uniforme en la flota (cífrala con ansible-vault). En ambos casos la
+# clave efectiva queda en /etc/sendguard/api.key (0600 root), de donde
+# sendguard-ctl la lee automáticamente cuando no se le pasa -key.
 # sendguard_api_key: ""

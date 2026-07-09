@@ -495,7 +495,10 @@ ufw status | grep "Status:"
 
 ### API returns 401
 
-Pass the API key with `-key`:
+As root, `sendguard-ctl` reads the key from `/etc/sendguard/api.key` automatically
+(or from `$SENDGUARD_API_KEY`). A 401 usually means that file is missing or stale —
+check that it matches `api.api_key` in `agent.yaml`. You can always pass the key
+explicitly:
 ```bash
 sendguard-ctl -addr http://127.0.0.1:9099 -key your-api-key block 1.2.3.4
 ```

@@ -65,19 +65,11 @@
 # unsuspend/whitelist). Sin ella, cualquier proceso local del servidor podría
 # desactivar SendGuard tras un compromiso parcial (p.ej. usuario zimbra o webshell).
 # Se genera una vez por host y sobrevive redeploys (agent.yaml se regenera;
-# api.key no se toca).
+# api.key conserva la clave).
 - name: Generar API key local del agente (si no existe)
   ansible.builtin.shell: umask 077 && openssl rand -hex 32 > {{ sendguard_config_dir }}/api.key
   args:
     creates: "{{ sendguard_config_dir }}/api.key"
-  when: sendguard_api_key | length == 0
-
-- name: Asegurar permisos de la API key
-  ansible.builtin.file:
-    path: "{{ sendguard_config_dir }}/api.key"
-    owner: root
-    group: root
-    mode: "0600"
   when: sendguard_api_key | length == 0
 
 - name: Leer API key local
@@ -91,6 +83,17 @@
     sendguard_api_key_effective: >-
       {{ sendguard_api_key if sendguard_api_key | length > 0
          else (sendguard_api_key_slurp.content | b64decode | trim) }}
+
+# api.key debe reflejar SIEMPRE la clave efectiva: sendguard-ctl la lee de ahí
+# cuando no se pasa -key. Con clave de flota (sendguard_api_key en vault) el
+# archivo podría no existir o quedarse con una clave autogenerada vieja.
+- name: Persistir API key efectiva para sendguard-ctl
+  ansible.builtin.copy:
+    content: "{{ sendguard_api_key_effective }}\n"
+    dest: "{{ sendguard_config_dir }}/api.key"
+    owner: root
+    group: root
+    mode: "0600"
 
 - name: Generar agent.yaml
   ansible.builtin.template:
