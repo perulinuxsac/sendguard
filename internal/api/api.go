@@ -478,6 +478,17 @@ func (s *Server) handleWhitelistAdd(w http.ResponseWriter, r *http.Request) {
 		s.persistWhitelist(canonicalCIDR(value), "ip")
 		writeJSON(w, http.StatusOK, map[string]string{"added_ip": value})
 	} else {
+		// Un valor que solo tiene dígitos, puntos y "/" pretendía ser una
+		// IP/CIDR y no parseó ("300.1.2.3", "10.0.0.0/33"). Guardarlo en
+		// silencio como CUENTA dejaría al operador creyendo que exoneró la
+		// IP. Solo aplica al add; el remove sigue aceptando cualquier valor
+		// para poder limpiar entradas defectuosas ya persistidas.
+		if looksLikeIP(value) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("IP/CIDR inválido: %s", value),
+			})
+			return
+		}
 		s.deps.Whitelist.AddAccount(value)
 		s.persistWhitelist(value, "account")
 		writeJSON(w, http.StatusOK, map[string]string{"added_account": value})
@@ -565,6 +576,20 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
+}
+
+// looksLikeIP retorna true si el string está compuesto solo de dígitos, puntos
+// y "/": una cuenta jamás tiene esa forma, pero una IP/CIDR mal tipeada sí.
+func looksLikeIP(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && r != '.' && r != '/' {
+			return false
+		}
+	}
+	return true
 }
 
 // isIPOrCIDR retorna true si el string es una IP individual o un bloque CIDR válido.

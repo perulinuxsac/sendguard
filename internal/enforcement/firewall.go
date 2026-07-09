@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
@@ -41,7 +40,7 @@ type firewalldFW struct{}
 
 func (f *firewalldFW) Block(ctx context.Context, ip string, banSeconds int) error {
 	for _, args := range buildFirewallCmds(ip, banSeconds) {
-		cmd := exec.CommandContext(ctx, "firewall-cmd", args...)
+		cmd := newCmd(ctx, "firewall-cmd", args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("firewall-cmd %v: %w — %s", args, err, bytes.TrimSpace(out))
 		}
@@ -53,13 +52,13 @@ func (f *firewalldFW) Unblock(ctx context.Context, ip string) error {
 	rule := fmt.Sprintf("rule family='ipv4' source address='%s' reject", ip)
 	remove := fmt.Sprintf("--remove-rich-rule=%s", rule)
 	// Ignore errors — rule may already be gone (expired timeout, manual removal).
-	exec.CommandContext(ctx, "firewall-cmd", remove).Run()
-	exec.CommandContext(ctx, "firewall-cmd", "--permanent", remove).Run()
+	newCmd(ctx, "firewall-cmd", remove).Run()
+	newCmd(ctx, "firewall-cmd", "--permanent", remove).Run()
 	return nil
 }
 
 func (f *firewalldFW) ListBlockedIPs(ctx context.Context) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "firewall-cmd", "--list-rich-rules").Output()
+	out, err := newCmd(ctx, "firewall-cmd", "--list-rich-rules").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +120,7 @@ type ufwFW struct{}
 // (25/465/587/993) y no bloquea nada en un mail server. ufw no soporta
 // --timeout nativo; la expiración la gestiona el enforcer con runUnbanLoop.
 func (f *ufwFW) Block(ctx context.Context, ip string, _ int) error {
-	cmd := exec.CommandContext(ctx, "ufw", "insert", "1", "deny", "from", ip, "to", "any")
+	cmd := newCmd(ctx, "ufw", "insert", "1", "deny", "from", ip, "to", "any")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil
@@ -131,7 +130,7 @@ func (f *ufwFW) Block(ctx context.Context, ip string, _ int) error {
 	if !strings.Contains(string(out), "Invalid position") {
 		return fmt.Errorf("ufw insert 1 deny %s: %w — %s", ip, err, bytes.TrimSpace(out))
 	}
-	cmd = exec.CommandContext(ctx, "ufw", "deny", "from", ip, "to", "any")
+	cmd = newCmd(ctx, "ufw", "deny", "from", ip, "to", "any")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ufw deny %s: %w — %s", ip, err, bytes.TrimSpace(out))
 	}
@@ -139,7 +138,7 @@ func (f *ufwFW) Block(ctx context.Context, ip string, _ int) error {
 }
 
 func (f *ufwFW) Unblock(ctx context.Context, ip string) error {
-	cmd := exec.CommandContext(ctx, "ufw", "--force", "delete", "deny", "from", ip, "to", "any")
+	cmd := newCmd(ctx, "ufw", "--force", "delete", "deny", "from", ip, "to", "any")
 	out, err := cmd.CombinedOutput()
 	if err != nil && !strings.Contains(string(out), "Could not delete") {
 		return fmt.Errorf("ufw delete %s: %w — %s", ip, err, bytes.TrimSpace(out))
@@ -148,7 +147,7 @@ func (f *ufwFW) Unblock(ctx context.Context, ip string) error {
 }
 
 func (f *ufwFW) ListBlockedIPs(ctx context.Context) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "ufw", "status").Output()
+	out, err := newCmd(ctx, "ufw", "status").Output()
 	if err != nil {
 		return nil, err
 	}

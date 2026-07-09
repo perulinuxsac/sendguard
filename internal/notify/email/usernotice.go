@@ -27,10 +27,14 @@ func (n *Notifier) NotifySuspendedUser(ctx context.Context, account string, aler
 
 	msg := n.buildUserNotice(account, alert)
 
+	ctx, cancel := context.WithTimeout(ctx, sendmailTimeout)
+	defer cancel()
+
 	// "--" separa opciones de destinatarios: una cuenta que empiece con "-"
 	// no debe interpretarse como flag de sendmail.
 	args := []string{"-f", n.cfg.UserNoticeFrom, "--", account}
 	cmd := exec.CommandContext(ctx, n.cfg.SendmailBin, args...)
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Stdin = bytes.NewBufferString(msg)
 
 	if out, err := cmd.CombinedOutput(); err != nil {

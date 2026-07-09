@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"strings"
 )
 
@@ -36,14 +35,14 @@ type ipsetFW struct{}
 // La primera vez crea el set y el binding en la config permanente y recarga
 // (los ipsets de firewalld solo pueden crearse en permanente).
 func (f *ipsetFW) Setup(ctx context.Context) error {
-	out, err := exec.CommandContext(ctx, "firewall-cmd", "--get-ipsets").Output()
+	out, err := newCmd(ctx, "firewall-cmd", "--get-ipsets").Output()
 	if err != nil {
 		return fmt.Errorf("firewall-cmd --get-ipsets: %w", err)
 	}
 	hasSet := containsField(string(out), ipsetName)
 
 	hasBinding := false
-	if out, err := exec.CommandContext(ctx, "firewall-cmd", "--zone=drop", "--list-sources").Output(); err == nil {
+	if out, err := newCmd(ctx, "firewall-cmd", "--zone=drop", "--list-sources").Output(); err == nil {
 		hasBinding = containsField(string(out), "ipset:"+ipsetName)
 	}
 
@@ -59,7 +58,7 @@ func (f *ipsetFW) Setup(ctx context.Context) error {
 		{"--permanent", "--zone=drop", "--add-source=ipset:" + ipsetName},
 	}
 	for _, args := range steps {
-		cmd := exec.CommandContext(ctx, "firewall-cmd", args...)
+		cmd := newCmd(ctx, "firewall-cmd", args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			s := string(out)
 			if strings.Contains(s, "NAME_CONFLICT") || strings.Contains(s, "ALREADY_ENABLED") {
@@ -68,7 +67,7 @@ func (f *ipsetFW) Setup(ctx context.Context) error {
 			return fmt.Errorf("firewall-cmd %v: %w — %s", args, err, strings.TrimSpace(s))
 		}
 	}
-	if out, err := exec.CommandContext(ctx, "firewall-cmd", "--reload").CombinedOutput(); err != nil {
+	if out, err := newCmd(ctx, "firewall-cmd", "--reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("firewall-cmd --reload: %w — %s", err, bytes.TrimSpace(out))
 	}
 	slog.Info("enforcement: ipset creado y enlazado a la zona drop", "ipset", ipsetName)
@@ -84,7 +83,7 @@ func (f *ipsetFW) Block(ctx context.Context, ip string, banSeconds int) error {
 		cmds = append(cmds, []string{"--permanent", "--ipset=" + ipsetName, "--add-entry=" + ip})
 	}
 	for _, args := range cmds {
-		cmd := exec.CommandContext(ctx, "firewall-cmd", args...)
+		cmd := newCmd(ctx, "firewall-cmd", args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			if strings.Contains(string(out), "ALREADY_ENABLED") {
 				continue
@@ -98,14 +97,14 @@ func (f *ipsetFW) Block(ctx context.Context, ip string, banSeconds int) error {
 // Unblock elimina la entrada del set (runtime y permanente).
 // Ignora errores de entradas inexistentes, igual que los otros backends.
 func (f *ipsetFW) Unblock(ctx context.Context, ip string) error {
-	exec.CommandContext(ctx, "firewall-cmd", "--ipset="+ipsetName, "--remove-entry="+ip).Run()
-	exec.CommandContext(ctx, "firewall-cmd", "--permanent", "--ipset="+ipsetName, "--remove-entry="+ip).Run()
+	newCmd(ctx, "firewall-cmd", "--ipset="+ipsetName, "--remove-entry="+ip).Run()
+	newCmd(ctx, "firewall-cmd", "--permanent", "--ipset="+ipsetName, "--remove-entry="+ip).Run()
 	return nil
 }
 
 // ListBlockedIPs retorna las entradas actuales del set (una por línea).
 func (f *ipsetFW) ListBlockedIPs(ctx context.Context) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "firewall-cmd", "--ipset="+ipsetName, "--get-entries").Output()
+	out, err := newCmd(ctx, "firewall-cmd", "--ipset="+ipsetName, "--get-entries").Output()
 	if err != nil {
 		return nil, err
 	}

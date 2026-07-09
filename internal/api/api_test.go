@@ -596,6 +596,36 @@ func TestWhitelistAddIP(t *testing.T) {
 	}
 }
 
+func TestWhitelistAddIPMalTipeadaNoSeGuardaComoCuenta(t *testing.T) {
+	// "300.1.2.3" no parsea como IP: guardarlo en silencio como CUENTA dejaría
+	// al operador creyendo que exoneró la IP. Debe responder 400.
+	wl := &mockWhitelist{}
+	srv := newFullTestServer(&mockEnforcer{}, &mockEngine{}, func(d *api.Dependencies) {
+		d.Whitelist = wl
+	})
+	for _, v := range []string{"300.1.2.3", "10.0.0.0/33", "1.2.3"} {
+		rr := do(t, srv, http.MethodPost, "/whitelist/"+v)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("add %q: got %d, want 400", v, rr.Code)
+		}
+	}
+	if len(wl.accounts) != 0 || len(wl.ips) != 0 {
+		t.Errorf("nada debe guardarse: ips=%v accounts=%v", wl.ips, wl.accounts)
+	}
+}
+
+func TestWhitelistRemoveAceptaEntradaDefectuosa(t *testing.T) {
+	// El remove debe seguir aceptando valores con forma de IP inválida para
+	// poder limpiar entradas persistidas por versiones anteriores.
+	srv := newFullTestServer(&mockEnforcer{}, &mockEngine{}, func(d *api.Dependencies) {
+		d.Whitelist = &mockWhitelist{}
+	})
+	rr := do(t, srv, http.MethodDelete, "/whitelist/300.1.2.3")
+	if rr.Code != http.StatusOK {
+		t.Errorf("remove de entrada defectuosa: got %d, want 200", rr.Code)
+	}
+}
+
 func TestWhitelistAddAccount(t *testing.T) {
 	wl := &mockWhitelist{}
 	srv := newFullTestServer(&mockEnforcer{}, &mockEngine{}, func(d *api.Dependencies) {

@@ -76,6 +76,16 @@ func actionCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, actionTimeout)
 }
 
+// newCmd crea el exec.Cmd de un comando externo con WaitDelay: al cancelarse el
+// contexto se mata el proceso, pero sin WaitDelay Wait() sigue esperando a que
+// un hijo huérfano cierre los pipes (zmprov es un wrapper de java; sendmail
+// delega en postdrop) — y el timeout no surtiría efecto.
+func newCmd(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 10 * time.Second
+	return cmd
+}
+
 // blockedIP registra cuándo expira el baneo de una IP para evitar
 // llamadas duplicadas al firewall.
 type blockedIP struct {
@@ -481,7 +491,7 @@ func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 		zmprov = "/opt/zimbra/bin/zmprov"
 	}
 	zmCtx, cancel := actionCtx(ctx)
-	cmd := exec.CommandContext(zmCtx, zmprov, "ma", alert.Account, "zimbraAccountStatus", "locked")
+	cmd := newCmd(zmCtx, zmprov, "ma", alert.Account, "zimbraAccountStatus", "locked")
 	out, err := cmd.CombinedOutput()
 	cancel()
 	if err != nil {
@@ -977,7 +987,7 @@ func (e *Enforcer) Unsuspend(ctx context.Context, account string) error {
 	// del request HTTP ni colgarse sin límite.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), actionTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, zmprov, "ma", account, "zimbraAccountStatus", "active")
+	cmd := newCmd(ctx, zmprov, "ma", account, "zimbraAccountStatus", "active")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("zmprov ma %s active: %w (output: %s)", account, err, strings.TrimSpace(string(out)))

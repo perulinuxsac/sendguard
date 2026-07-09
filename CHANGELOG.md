@@ -15,6 +15,18 @@ Segunda tanda de correcciones de la auditoría de código interna (revisión
 completa de los 15 paquetes, los 3 binarios y el deploy).
 
 ### Corregido
+- **Timeout (60 s) y `WaitDelay` en los tres envíos por sendmail** (alerta al
+  admin, aviso al usuario suspendido, reporte diario). La alerta al admin se
+  envía desde el goroutine del enforcer: un sendmail colgado congelaba el
+  pipeline de contención igual que los comandos ya corregidos en esta versión.
+  `WaitDelay` cubre además un hueco de todos los comandos externos: matar el
+  proceso por timeout no basta si un hijo huérfano (postdrop, el java de
+  zmprov) hereda los pipes — `Wait()` seguía bloqueado esperándolos. Aplica a
+  sendmail, zmprov, firewall-cmd/ufw y postqueue/postmap/postsuper.
+- **`whitelist add` con una IP mal tipeada ("300.1.2.3", "10.0.0.0/33") ya no
+  se guarda en silencio como CUENTA**: responde 400. El operador creía haber
+  exonerado la IP y la entrada persistida no protegía nada. El remove sigue
+  aceptando cualquier valor para poder limpiar entradas defectuosas antiguas.
 - **ufw: los bloqueos ahora se insertan al INICIO de la lista de reglas**
   (`ufw insert 1`). `ufw deny` a secas añade la regla al final, detrás de los
   `allow` de los puertos de correo, y como ufw aplica la primera coincidencia

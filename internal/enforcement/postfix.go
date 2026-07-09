@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -25,7 +24,7 @@ var accessFileMu sync.Mutex
 // binarios de Zimbra. postsuper también requiere root.
 func purgeQueueDomain(ctx context.Context, domain, sbinDir, confDir string) (int, error) {
 	postqueue := filepath.Join(sbinDir, "postqueue")
-	out, err := exec.CommandContext(ctx, postqueue, "-c", confDir, "-p").Output()
+	out, err := newCmd(ctx, postqueue, "-c", confDir, "-p").Output()
 	if err != nil {
 		return 0, fmt.Errorf("postqueue -p: %w", err)
 	}
@@ -38,7 +37,7 @@ func purgeQueueDomain(ctx context.Context, domain, sbinDir, confDir string) (int
 	postsuper := filepath.Join(sbinDir, "postsuper")
 	deleted := 0
 	for _, id := range ids {
-		if err := exec.CommandContext(ctx, postsuper, "-c", confDir, "-d", id).Run(); err != nil {
+		if err := newCmd(ctx, postsuper, "-c", confDir, "-d", id).Run(); err != nil {
 			slog.Warn("enforcement: postsuper -d falló", "id", id, "error", err)
 			continue
 		}
@@ -138,7 +137,7 @@ func rateLimit(ctx context.Context, account string, sbinDir, confDir string) err
 	f.Close()
 
 	postmap := filepath.Join(sbinDir, "postmap")
-	out, err := exec.CommandContext(ctx, postmap, "lmdb:"+accessFile).CombinedOutput()
+	out, err := newCmd(ctx, postmap, "lmdb:"+accessFile).CombinedOutput()
 	accessFileMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("postmap lmdb:%s: %w (output: %s)", accessFile, err, string(out))
@@ -158,7 +157,7 @@ type QueueEntry struct {
 // Retorna slice vacío (no error) si la cola está vacía.
 func ListQueue(ctx context.Context, sbinDir, confDir string) ([]QueueEntry, error) {
 	postqueue := filepath.Join(sbinDir, "postqueue")
-	out, err := exec.CommandContext(ctx, postqueue, "-c", confDir, "-p").Output()
+	out, err := newCmd(ctx, postqueue, "-c", confDir, "-p").Output()
 	if err != nil {
 		return nil, fmt.Errorf("postqueue -p: %w", err)
 	}
@@ -259,8 +258,12 @@ func removeRateLimit(account, sbinDir, confDir string) error {
 		return fmt.Errorf("actualizar access file: %w", err)
 	}
 
+	// Contexto propio: esta función corre en time.AfterFunc/arranque, sin
+	// contexto del llamante, y postmap tampoco debe poder colgarse sin límite.
+	ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+	defer cancel()
 	postmap := filepath.Join(sbinDir, "postmap")
-	if err := exec.Command(postmap, "lmdb:"+accessFile).Run(); err != nil {
+	if err := newCmd(ctx, postmap, "lmdb:"+accessFile).Run(); err != nil {
 		return fmt.Errorf("postmap: %w", err)
 	}
 	slog.Info("enforcement: rate-limit eliminado", "account", account)

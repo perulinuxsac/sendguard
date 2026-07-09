@@ -2,6 +2,8 @@ package email
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -173,5 +175,56 @@ func TestActionLabelAndIcon(t *testing.T) {
 		if actionIcon(detection.ActionNotifyOnly, m) == "" {
 			t.Errorf("actionIcon(notify_only, %q) vacío", m)
 		}
+	}
+}
+
+func TestNotifySendmailColgadoRespetaTimeout(t *testing.T) {
+	// Un sendmail que nunca termina no debe congelar Notify (que corre en el
+	// goroutine del enforcer): el timeout local debe matarlo.
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "sendmail")
+	// El sleep largo simula postdrop trabado; el timeout de test lo corta.
+	os.WriteFile(bin, []byte("#!/bin/sh\nsleep 30\n"), 0755)
+
+	old := sendmailTimeout
+	sendmailTimeout = 200 * time.Millisecond
+	defer func() { sendmailTimeout = old }()
+
+	n := New(Config{From: "sg@d.com", To: []string{"noc@d.com"}, SendmailBin: bin})
+
+	done := make(chan error, 1)
+	go func() { done <- n.Notify(context.Background(), sampleAlert()) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("sendmail colgado debe retornar error por timeout")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Notify quedó colgado pese al timeout")
+	}
+}
+
+func TestNotifySuspendedUserSendmailColgadoRespetaTimeout(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "sendmail")
+	os.WriteFile(bin, []byte("#!/bin/sh\nsleep 30\n"), 0755)
+
+	old := sendmailTimeout
+	sendmailTimeout = 200 * time.Millisecond
+	defer func() { sendmailTimeout = old }()
+
+	n := New(Config{From: "sg@d.com", SendmailBin: bin})
+
+	done := make(chan error, 1)
+	go func() { done <- n.NotifySuspendedUser(context.Background(), "user@d.com", sampleAlert()) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("sendmail colgado debe retornar error por timeout")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("NotifySuspendedUser quedó colgado pese al timeout")
 	}
 }

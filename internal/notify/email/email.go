@@ -18,6 +18,12 @@ const defaultSendmail = "/opt/zimbra/common/sbin/sendmail"
 
 const mimeBoundary = "sendguard_boundary_4f8a2b1c"
 
+// sendmailTimeout acota la ejecución de sendmail. Notify corre en el goroutine
+// del enforcer: un sendmail colgado (postdrop sin espacio, maildrop trabado)
+// congelaría todo el pipeline de contención. Var (no const) para poder
+// acortarlo en tests.
+var sendmailTimeout = 60 * time.Second
+
 // Config agrupa los parámetros del notificador de email.
 type Config struct {
 	From        string   // dirección remitente (requerido)
@@ -52,8 +58,14 @@ func (n *Notifier) Notify(ctx context.Context, alert detection.Alert) error {
 
 	msg := n.buildMessage(alert)
 
+	ctx, cancel := context.WithTimeout(ctx, sendmailTimeout)
+	defer cancel()
+
 	args := append([]string{"-f", n.cfg.From}, n.cfg.To...)
 	cmd := exec.CommandContext(ctx, n.cfg.SendmailBin, args...)
+	// Sin WaitDelay, un hijo huérfano de sendmail (postdrop) que herede los
+	// pipes mantendría Wait() bloqueado aunque el timeout mate a sendmail.
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Stdin = bytes.NewBufferString(msg)
 
 	if out, err := cmd.CombinedOutput(); err != nil {

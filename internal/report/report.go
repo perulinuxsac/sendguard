@@ -85,8 +85,13 @@ func (r *Reporter) Send(ctx context.Context) error {
 		return nil
 	}
 	msg := r.buildMessage()
+	// Timeout local: un sendmail colgado no debe dejar el goroutine del
+	// reporter esperando para siempre (perdería todos los reportes futuros).
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	args := append([]string{"-f", r.cfg.EmailFrom}, r.cfg.EmailTo...)
 	cmd := exec.CommandContext(ctx, r.cfg.SendmailBin, args...)
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Stdin = bytes.NewBufferString(msg)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("sendmail: %w — %s", err, strings.TrimSpace(string(out)))
