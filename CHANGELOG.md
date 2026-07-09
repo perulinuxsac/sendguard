@@ -9,6 +9,35 @@ Las versiones v1.0.6 – v1.0.10 surgieron de la respuesta a un incidente de
 compromiso masivo de cuentas en `webmail.perucloud.pe` (12 jun 2026), en el
 que cuentas hackeadas enviaban spam falseando el `From` del sobre.
 
+## [1.0.11] - 2026-07-09
+
+Correcciones surgidas de una auditoría de código interna.
+
+### Corregido
+- **Las alertas con IP de país permitido ahora SÍ se notifican.** Antes,
+  además de omitirse la contención (bloqueo/suspensión/rate-limit), se
+  suprimía también la notificación push: un atacante operando desde una IP
+  nacional (o un VPS/VPN local) pasaba completamente desapercibido — solo
+  quedaba rastro en el audit log. Ahora la notificación se envía siempre,
+  con la marca «⚠ contención omitida: IP de país permitido (XX) — revisar
+  manualmente» en las razones (registrada también en el audit log y el
+  forwarder). La contención sigue omitiéndose igual que antes.
+
+### Seguridad
+- **API key autogenerada para los endpoints de escritura de la API local.**
+  Con `api.api_key` vacío, cualquier proceso local del servidor podía
+  desbloquear IPs, rehabilitar cuentas o whitelistar al atacante
+  (`DELETE /blocked/{ip}`, `DELETE /suspended/{account}`,
+  `POST /whitelist/{v}`) y desactivar SendGuard tras un compromiso parcial
+  del host. Ahora `install.sh` y el rol de Ansible generan una clave
+  aleatoria por host (persistida en `/etc/sendguard/api.key`, modo 0600,
+  reutilizada en upgrades y redeploys) y la escriben en `api.api_key`. El
+  agente advierte al arrancar si la API corre sin clave. Uso con el ctl:
+  `sendguard-ctl -key "$(cat /etc/sendguard/api.key)" block <ip>`.
+- La comparación de la API key usa `crypto/subtle.ConstantTimeCompare`
+  (antes `!=`, susceptible de timing attack si la API se expone fuera de
+  loopback).
+
 ## [1.0.10] - 2026-06-12
 
 ### Añadido
