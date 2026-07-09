@@ -578,6 +578,36 @@ func TestRestoreRateLimitsLimpiaExpirados(t *testing.T) {
 	}
 }
 
+func TestExpireRateLimitTimerObsoletoNoLimpiaVigente(t *testing.T) {
+	// Una cuenta ya limitada recibe otra alerta: applyRateLimit extiende la
+	// expiración persistida y agenda un segundo timer, pero el primero sigue
+	// vivo. Al dispararse debe detectar que la expiración vigente es futura
+	// y NO limpiar el REJECT antes de tiempo.
+	sbinDir := setupFakeBin(t, "postmap")
+	confDir := t.TempDir()
+	accessFile := filepath.Join(confDir, "sendguard_access")
+	os.WriteFile(accessFile,
+		[]byte("user@domain.com REJECT SendGuard: limite de envio excedido\n"), 0644)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.SaveRateLimit("user@domain.com", time.Now().Add(time.Hour)) // extendido
+
+	e := New(Config{PostfixSbin: sbinDir, PostfixConf: confDir, BanSeconds: 3600, Store: st})
+	e.expireRateLimit("user@domain.com") // el timer original, ya obsoleto
+
+	data, _ := os.ReadFile(accessFile)
+	if !strings.Contains(string(data), "user@domain.com") {
+		t.Error("un timer obsoleto no debe limpiar un rate-limit aún vigente")
+	}
+	if recs, _ := st.LoadRateLimits(); len(recs) != 1 {
+		t.Errorf("el registro extendido debe conservarse: %v", recs)
+	}
+}
+
 func TestRestoreRateLimitsConservaVigentes(t *testing.T) {
 	sbinDir := setupFakeBin(t, "postmap")
 	confDir := t.TempDir()

@@ -570,7 +570,20 @@ func (e *Enforcer) scheduleRateLimitExpiry(account string, banSecs int) {
 // expireRateLimit limpia la entrada del access file y, solo si la limpieza tuvo
 // éxito, elimina el registro persistido — si falla, el registro queda y el
 // próximo arranque del agente reintenta la limpieza.
+//
+// Si la expiración persistida aún está vigente, este timer es obsoleto: una
+// alerta posterior extendió el rate-limit (SaveRateLimit reemplaza la fila) y
+// programó su propio AfterFunc, que hará la limpieza a su hora. Sin este
+// chequeo, el timer original limpiaba el REJECT antes de tiempo.
 func (e *Enforcer) expireRateLimit(account string) {
+	if e.cfg.Store != nil {
+		exp, ok, err := e.cfg.Store.GetRateLimit(account)
+		if err != nil {
+			slog.Warn("enforcement: no se pudo consultar rate-limit persistido", "account", account, "error", err)
+		} else if ok && exp.After(time.Now()) {
+			return
+		}
+	}
 	if err := removeRateLimit(account, e.cfg.PostfixSbin, e.cfg.PostfixConf); err != nil {
 		slog.Warn("enforcement: fallo al limpiar rate-limit expirado (se reintentará al reiniciar)",
 			"account", account, "error", err)

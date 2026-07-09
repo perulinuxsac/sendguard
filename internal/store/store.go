@@ -8,6 +8,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -203,6 +204,20 @@ func (s *Store) DeleteRateLimit(account string) error {
 		return fmt.Errorf("store: DeleteRateLimit %s: %w", account, err)
 	}
 	return nil
+}
+
+// GetRateLimit retorna la expiración persistida del rate-limit de una cuenta.
+// El segundo valor es false si no hay registro.
+func (s *Store) GetRateLimit(account string) (time.Time, bool, error) {
+	var exp int64
+	err := s.db.QueryRow(`SELECT expires_at FROM rate_limits WHERE account = ?`, account).Scan(&exp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("store: GetRateLimit %s: %w", account, err)
+	}
+	return time.Unix(exp, 0), true, nil
 }
 
 // LoadRateLimits retorna TODOS los rate-limits persistidos, incluidos los ya
