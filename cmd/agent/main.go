@@ -363,6 +363,10 @@ func main() {
 
 	// API HTTP de observabilidad (opcional; deshabilitada si Listen está vacío)
 	if cfg.API.Listen != "" {
+		if cfg.API.APIKey == "" {
+			slog.Warn("api: api.api_key vacío — los endpoints de escritura (block/unblock/unsuspend/whitelist) " +
+				"aceptan peticiones de cualquier proceso local sin autenticación; configura una clave en api.api_key")
+		}
 		apiDeps := api.Dependencies{
 			Enforcer:    enforcer,
 			Engine:      api.AdaptEngine(engine),

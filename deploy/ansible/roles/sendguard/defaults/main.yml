@@ -70,6 +70,11 @@ sendguard_maxmind_cron_minute: "0"
 # ── Firewall / API / report ──────────────────────────────────────────────────
 sendguard_ban_seconds: 3600
 sendguard_api_listen: "127.0.0.1:9099"
+# API key de los endpoints de escritura de la API local (block/unblock/
+# unsuspend/whitelist add/remove). Vacío = el rol autogenera una clave aleatoria
+# por host en {{ sendguard_config_dir }}/api.key y la reutiliza en cada redeploy.
+# Para el ctl: sendguard-ctl -key "$(cat /etc/sendguard/api.key)" block <ip>
+sendguard_api_key: ""
 sendguard_policyd_listen: "127.0.0.1:9100"
 sendguard_daily_report_hour: 8
 sendguard_local_db_max_size_mb: 100

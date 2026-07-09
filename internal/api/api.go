@@ -22,6 +22,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -538,7 +539,9 @@ func (s *Server) requireKey(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		if r.Header.Get("X-Api-Key") != s.deps.APIKey {
+		// Comparación en tiempo constante para no filtrar la clave byte a byte
+		// por timing (la API puede exponerse fuera de loopback vía config).
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Api-Key")), []byte(s.deps.APIKey)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "API key inválida o ausente"})
 			return
 		}

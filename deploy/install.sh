@@ -201,6 +201,7 @@ if [[ -f "$CONFIG_FILE" ]]; then
     DEF_EMAIL_FROM=$(cfg_get_under "notification" "from")
     DEF_EMAIL_TO=$(cfg_get_list "to")
     DEF_ABUSEIPDB=$(cfg_get_under "abuseipdb" "api_key")
+    DEF_API_KEY=$(cfg_get_under "api" "api_key")
     DEF_ON_ACTIONS=$(cfg_get_list "on_actions")
     DEF_MM_ACCOUNT=$(cfg_get_under "geoip" "maxmind_account_id")
     DEF_MM_LICENSE=$(cfg_get_under "geoip" "maxmind_license_key")
@@ -213,6 +214,7 @@ else
     DEF_CTRL_URL="" DEF_CTRL_KEY=""
     DEF_EMAIL_FROM="" DEF_EMAIL_TO=""
     DEF_ABUSEIPDB=""
+    DEF_API_KEY=""
     DEF_ON_ACTIONS="suspend_account"
     DEF_MM_ACCOUNT="" DEF_MM_LICENSE=""
 fi
@@ -271,6 +273,16 @@ MM_LICENSE_KEY=""
 
 # ── Generar YAML ──────────────────────────────────────────────────────────────
 section "── Generando configuración"
+
+# API key de los endpoints de escritura de la API local (block/unblock/
+# unsuspend/whitelist). Sin ella cualquier proceso local puede desactivar
+# SendGuard. Se conserva la existente en upgrades; se genera si no hay.
+API_KEY="$DEF_API_KEY"
+if [[ -z "$API_KEY" ]]; then
+    API_KEY=$(openssl rand -hex 32 2>/dev/null \
+        || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    ok "API key generada para los endpoints de escritura de la API local"
+fi
 
 # Convertir países a lista YAML
 COUNTRIES_YAML=""
@@ -460,6 +472,7 @@ firewall:
 
 api:
   listen: "${API_ADDR}"
+  api_key: "${API_KEY}"
 
 abuseipdb:
   api_key: "${ABUSEIPDB_KEY}"
@@ -489,6 +502,11 @@ YAML
 
 chmod 640 "$CONFIG_FILE"
 ok "Configuración escrita en $CONFIG_FILE (firewall: $FIREWALL_BACKEND)"
+
+# Copia de la API key para uso del operador con sendguard-ctl (mismo esquema
+# que el despliegue con Ansible: /etc/sendguard/api.key, solo root).
+printf '%s\n' "$API_KEY" > /etc/sendguard/api.key
+chmod 600 /etc/sendguard/api.key
 
 # ── Servicio systemd ───────────────────────────────────────────────────────────
 section "── Servicio systemd"
@@ -563,6 +581,10 @@ echo "  Comandos útiles:"
 echo "    journalctl -u sendguard-agent -f                    # logs en vivo"
 echo "    sendguard-ctl -addr http://$API_ADDR status         # estado + IPs bloqueadas"
 echo "    sendguard-ctl -addr http://$API_ADDR whitelist list # whitelist activa"
+echo ""
+echo "  Los comandos de escritura (block/unblock/unsuspend/whitelist add) requieren"
+echo "  la API key generada (guardada en /etc/sendguard/api.key):"
+echo "    sendguard-ctl -key \"\$(cat /etc/sendguard/api.key)\" block <ip>"
 echo ""
 [[ -n "$CTRL_URL" ]] \
     && echo "  Controller: $CTRL_URL" \

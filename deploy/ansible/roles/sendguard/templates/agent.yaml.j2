@@ -88,6 +88,7 @@ firewall:
 
 api:
   listen: "{{ sendguard_api_listen }}"
+  api_key: "{{ sendguard_api_key_effective }}"
 
 abuseipdb:
   api_key: "{{ sendguard_abuseipdb_key }}"

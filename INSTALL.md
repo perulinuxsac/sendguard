@@ -323,7 +323,11 @@ audit_log:
 # ── HTTP API ─────────────────────────────────────────────────────────────────
 api:
   listen: "127.0.0.1:9099"  # leave blank to disable the API
-  api_key: ""               # if set, write endpoints require X-Api-Key header
+  # Required for write endpoints (block/unblock/unsuspend/whitelist) via
+  # X-Api-Key header. install.sh and the Ansible role generate a random key
+  # automatically (stored in /etc/sendguard/api.key); leaving it empty means
+  # ANY local process can call the write endpoints — not recommended.
+  api_key: ""
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 notification:

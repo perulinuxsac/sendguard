@@ -61,6 +61,37 @@
   ansible.builtin.set_fact:
     sendguard_geoip_db_path: "{{ sendguard_geoip_db_path | default('') }}"
 
+# La API key protege los endpoints de escritura de la API local (block/unblock/
+# unsuspend/whitelist). Sin ella, cualquier proceso local del servidor podría
+# desactivar SendGuard tras un compromiso parcial (p.ej. usuario zimbra o webshell).
+# Se genera una vez por host y sobrevive redeploys (agent.yaml se regenera;
+# api.key no se toca).
+- name: Generar API key local del agente (si no existe)
+  ansible.builtin.shell: umask 077 && openssl rand -hex 32 > {{ sendguard_config_dir }}/api.key
+  args:
+    creates: "{{ sendguard_config_dir }}/api.key"
+  when: sendguard_api_key | length == 0
+
+- name: Asegurar permisos de la API key
+  ansible.builtin.file:
+    path: "{{ sendguard_config_dir }}/api.key"
+    owner: root
+    group: root
+    mode: "0600"
+  when: sendguard_api_key | length == 0
+
+- name: Leer API key local
+  ansible.builtin.slurp:
+    src: "{{ sendguard_config_dir }}/api.key"
+  register: sendguard_api_key_slurp
+  when: sendguard_api_key | length == 0
+
+- name: Fijar API key efectiva
+  ansible.builtin.set_fact:
+    sendguard_api_key_effective: >-
+      {{ sendguard_api_key if sendguard_api_key | length > 0
+         else (sendguard_api_key_slurp.content | b64decode | trim) }}
+
 - name: Generar agent.yaml
   ansible.builtin.template:
     src: agent.yaml.j2
