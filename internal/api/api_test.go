@@ -38,7 +38,14 @@ func (m *mockEnforcer) Block(_ context.Context, ip string, _ int) error {
 	m.blockCalled = ip
 	return m.blockErr
 }
-func (m *mockEnforcer) IsBlocked(_ string) bool { return false }
+func (m *mockEnforcer) IsBlocked(ip string) bool {
+	for _, b := range m.blocked {
+		if b.IP == ip {
+			return true
+		}
+	}
+	return false
+}
 func (m *mockEnforcer) GetBlockedIP(ip string) (enforcement.BlockedIPInfo, bool) {
 	for _, b := range m.blocked {
 		if b.IP == ip {
@@ -549,6 +556,27 @@ func TestWhitelistGetConDatos(t *testing.T) {
 	ips := body["ips"].([]any)
 	if len(ips) != 1 {
 		t.Errorf("ips: got %d, want 1", len(ips))
+	}
+}
+
+func TestWhitelistGetExcluyeIPsBloqueadas(t *testing.T) {
+	// Las IPs bloqueadas entran a la whitelist del engine solo para silenciar
+	// sus eventos durante el ban; el listado del operador no debe mostrarlas.
+	enf := &mockEnforcer{blocked: []enforcement.BlockedIPInfo{
+		{IP: "9.9.9.9", Expiry: time.Now().Add(time.Hour), Module: "auth_failed"},
+	}}
+	srv := newFullTestServer(enf, &mockEngine{}, func(d *api.Dependencies) {
+		d.Whitelist = &mockWhitelist{ips: []string{"9.9.9.9/32", "190.12.0.0/16"}}
+	})
+	rr := do(t, srv, http.MethodGet, "/whitelist")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rr.Code)
+	}
+	var body map[string]any
+	json.NewDecoder(rr.Body).Decode(&body)
+	ips := body["ips"].([]any)
+	if len(ips) != 1 || ips[0] != "190.12.0.0/16" {
+		t.Errorf("la IP bloqueada debe excluirse del listado: got %v", ips)
 	}
 }
 

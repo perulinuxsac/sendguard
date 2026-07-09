@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,76 @@ Anywhere                   DENY IN     1.2.3.4
 	ips := parseUFWStatus(out)
 	if len(ips) != 2 || ips[0] != "200.25.47.0/24" || ips[1] != "1.2.3.4" {
 		t.Errorf("CIDR en ufw status: got %v, want [200.25.47.0/24 1.2.3.4]", ips)
+	}
+}
+
+// ── ufw Block: insert 1 (la regla debe quedar ANTES de los allow) ─────────────
+
+// setupLoggingBin crea un fake bin que registra sus argumentos en calls.log.
+// extra se inserta antes del exit para simular comportamientos (fallos, output).
+func setupLoggingBin(t *testing.T, name, extra string) (binDir, logFile string) {
+	t.Helper()
+	binDir = t.TempDir()
+	logFile = filepath.Join(binDir, "calls.log")
+	script := "#!/bin/sh\necho \"$@\" >> " + logFile + "\n" + extra + "exit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return binDir, logFile
+}
+
+func TestUFWBlockInsertaAlInicio(t *testing.T) {
+	binDir, logFile := setupLoggingBin(t, "ufw", "")
+	prependPath(t, binDir)
+
+	f := &ufwFW{}
+	if err := f.Block(context.Background(), "1.2.3.4", 3600); err != nil {
+		t.Fatalf("Block: %v", err)
+	}
+	data, _ := os.ReadFile(logFile)
+	got := strings.TrimSpace(string(data))
+	want := "insert 1 deny from 1.2.3.4 to any"
+	if got != want {
+		t.Errorf("ufw debe insertar al inicio: got %q, want %q", got, want)
+	}
+}
+
+func TestUFWBlockFallbackSinReglasNumeradas(t *testing.T) {
+	// Sin reglas numeradas, "insert 1" falla con "Invalid position" y el único
+	// equivalente es el append simple.
+	binDir := t.TempDir()
+	logFile := filepath.Join(binDir, "calls.log")
+	script := `#!/bin/sh
+echo "$@" >> ` + logFile + `
+if [ "$1" = "insert" ]; then
+  echo "ERROR: Invalid position '1'"
+  exit 1
+fi
+exit 0
+`
+	os.WriteFile(filepath.Join(binDir, "ufw"), []byte(script), 0755)
+	prependPath(t, binDir)
+
+	f := &ufwFW{}
+	if err := f.Block(context.Background(), "5.6.7.8", 3600); err != nil {
+		t.Fatalf("Block con fallback: %v", err)
+	}
+	data, _ := os.ReadFile(logFile)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 || lines[1] != "deny from 5.6.7.8 to any" {
+		t.Errorf("esperado fallback a deny simple, got %v", lines)
+	}
+}
+
+func TestUFWBlockPropagaOtrosErrores(t *testing.T) {
+	binDir := t.TempDir()
+	script := "#!/bin/sh\necho 'ERROR: something broke'\nexit 1\n"
+	os.WriteFile(filepath.Join(binDir, "ufw"), []byte(script), 0755)
+	prependPath(t, binDir)
+
+	f := &ufwFW{}
+	if err := f.Block(context.Background(), "5.6.7.8", 3600); err == nil {
+		t.Error("un error distinto de Invalid position debe propagarse")
 	}
 }
 

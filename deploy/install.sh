@@ -408,7 +408,6 @@ zimbra:
   logs:
     main: "${MAIL_LOG}"
 ${MAILBOX_LINE}
-  workers: 4
   postfix_sbin: "${ZIMBRA_SBIN}"
   postfix_conf: "${ZIMBRA_CONF}"
 

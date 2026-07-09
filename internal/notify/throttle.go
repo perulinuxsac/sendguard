@@ -58,22 +58,29 @@ func NewThrottled(inner Notifier, cfg ThrottleConfig) *ThrottledNotifier {
 	}
 }
 
-// Notify envía la notificación solo si pasa ambos filtros de throttling.
-func (t *ThrottledNotifier) Notify(ctx context.Context, alert detection.Alert) error {
-	key := alert.IP
-	if key == "" {
-		key = alert.Account
+// throttleKey identifica el origen de la alerta para el cooldown. Incluye la
+// acción y la cuenta además de la IP: con la IP a secas, la segunda cuenta
+// suspendida desde la misma IP atacante dentro del cooldown se silenciaba —
+// exactamente el patrón de un incidente masivo, cuando más se necesita ver todo.
+func throttleKey(alert detection.Alert) string {
+	if alert.IP == "" && alert.Account == "" {
+		return string(alert.Action) + "|" + alert.Module
 	}
-	if key == "" {
-		key = alert.Module
-	}
+	return string(alert.Action) + "|" + alert.IP + "|" + alert.Account
+}
 
+// Notify envía la notificación solo si pasa ambos filtros de throttling.
+// El cooldown y la ventana se consumen DESPUÉS de un envío exitoso: un fallo
+// transitorio del canal (sendmail, Telegram) no debe suprimir la alerta
+// durante todo el cooldown.
+func (t *ThrottledNotifier) Notify(ctx context.Context, alert detection.Alert) error {
+	key := throttleKey(alert)
 	now := time.Now()
 
 	t.mu.Lock()
 
-	// 1. Cooldown por clave: mismo IP o cuenta dentro del período de enfriamiento.
-	if t.cfg.KeyCooldown > 0 && key != "" {
+	// 1. Cooldown por clave: misma acción+IP+cuenta dentro del período de enfriamiento.
+	if t.cfg.KeyCooldown > 0 {
 		if last, ok := t.keys[key]; ok {
 			remaining := t.cfg.KeyCooldown - now.Sub(last)
 			if remaining > 0 {
@@ -104,12 +111,21 @@ func (t *ThrottledNotifier) Notify(ctx context.Context, alert detection.Alert) e
 			)
 			return nil
 		}
-		t.windowCount++
 	}
 
-	// Registrar el envío para el cooldown por clave.
-	if t.cfg.KeyCooldown > 0 && key != "" {
-		t.keys[key] = now
+	t.mu.Unlock()
+
+	if err := t.inner.Notify(ctx, alert); err != nil {
+		return err
+	}
+
+	// Envío exitoso: consumir cupo de ventana y registrar el cooldown.
+	t.mu.Lock()
+	if t.cfg.MaxPerWindow > 0 {
+		t.windowCount++
+	}
+	if t.cfg.KeyCooldown > 0 {
+		t.keys[key] = time.Now()
 	}
 
 	// Limpiar claves expiradas periódicamente o cuando el mapa sea demasiado grande.
@@ -118,15 +134,13 @@ func (t *ThrottledNotifier) Notify(ctx context.Context, alert detection.Alert) e
 	t.pruneCount++
 	if t.pruneCount >= throttlePruneEvery || len(t.keys) >= throttleMaxKeys {
 		t.pruneCount = 0
-		cutoff := now.Add(-t.cfg.KeyCooldown)
+		cutoff := time.Now().Add(-t.cfg.KeyCooldown)
 		for k, ts := range t.keys {
 			if ts.Before(cutoff) {
 				delete(t.keys, k)
 			}
 		}
 	}
-
 	t.mu.Unlock()
-
-	return t.inner.Notify(ctx, alert)
+	return nil
 }

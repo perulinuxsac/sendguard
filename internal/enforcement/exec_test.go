@@ -472,3 +472,134 @@ func TestHandlePurgeQueueColasVacias(t *testing.T) {
 	})
 	// No panic, no error — cola vacía es un caso normal
 }
+
+// ── Correcciones de la auditoría jul-2026 ─────────────────────────────────────
+
+func TestBlockManualPropagaErrorDeFirewall(t *testing.T) {
+	// Si firewall-cmd/ufw falla, Block debe retornar error (la API/ctl no deben
+	// reportar "bloqueada") y el estado interno debe quedar limpio.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "ufw"), []byte("#!/bin/sh\necho boom >&2\nexit 1\n"), 0755)
+	prependPath(t, dir)
+
+	e := New(Config{FirewallBackend: "ufw", BanSeconds: 60})
+	if err := e.Block(context.Background(), "8.8.4.4", 0); err == nil {
+		t.Fatal("Block con firewall roto debe retornar error")
+	}
+	if len(e.BlockedIPs()) != 0 {
+		t.Errorf("el estado interno debe revertirse tras el fallo: %v", e.BlockedIPs())
+	}
+	if e.Stats().BlocksTotal != 0 {
+		t.Errorf("BlocksTotal debe seguir en 0, got %d", e.Stats().BlocksTotal)
+	}
+}
+
+func TestSuspendAccountDedupNoRepiteZmprovNiAviso(t *testing.T) {
+	dir := t.TempDir()
+	countFile := filepath.Join(dir, "count")
+	script := "#!/bin/sh\necho x >> " + countFile + "\nexit 0\n"
+	os.WriteFile(filepath.Join(dir, "zmprov"), []byte(script), 0755)
+
+	un := &fakeUserNotifier{}
+	e := New(Config{ZmprovBin: filepath.Join(dir, "zmprov"), UserNotifier: un})
+
+	alert := detection.Alert{Account: "user@domain.com", Module: "number_messages"}
+	e.suspendAccount(context.Background(), alert)
+	e.suspendAccount(context.Background(), alert) // repetida: debe omitirse
+
+	data, _ := os.ReadFile(countFile)
+	if got := strings.Count(string(data), "x"); got != 1 {
+		t.Errorf("zmprov debe ejecutarse 1 vez, got %d", got)
+	}
+	if len(un.accounts) != 1 {
+		t.Errorf("el aviso al usuario debe enviarse 1 vez, got %d", len(un.accounts))
+	}
+	if e.Stats().SuspensionsTotal != 1 {
+		t.Errorf("SuspensionsTotal: got %d, want 1", e.Stats().SuspensionsTotal)
+	}
+}
+
+// ── Rate-limit persistente (sobrevive reinicios del agente) ──────────────────
+
+func TestApplyRateLimitPersisteExpiracion(t *testing.T) {
+	sbinDir := setupFakeBin(t, "postmap")
+	confDir := t.TempDir()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	e := New(Config{PostfixSbin: sbinDir, PostfixConf: confDir, BanSeconds: 3600, Store: st})
+	if err := e.applyRateLimit(context.Background(), "user@domain.com"); err != nil {
+		t.Fatalf("applyRateLimit: %v", err)
+	}
+
+	recs, err := st.LoadRateLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Account != "user@domain.com" {
+		t.Fatalf("rate-limit no persistido: %v", recs)
+	}
+	if !recs[0].ExpiresAt.After(time.Now()) {
+		t.Error("la expiración persistida debe ser futura")
+	}
+}
+
+func TestRestoreRateLimitsLimpiaExpirados(t *testing.T) {
+	// Simula un reinicio del agente con un rate-limit ya vencido: la entrada
+	// REJECT sigue en el access file y el arranque debe limpiarla.
+	sbinDir := setupFakeBin(t, "postmap")
+	confDir := t.TempDir()
+	accessFile := filepath.Join(confDir, "sendguard_access")
+	os.WriteFile(accessFile,
+		[]byte("user@domain.com REJECT SendGuard: limite de envio excedido\notro@d.com REJECT SendGuard\n"), 0644)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.SaveRateLimit("user@domain.com", time.Now().Add(-time.Minute)) // ya vencido
+
+	e := New(Config{PostfixSbin: sbinDir, PostfixConf: confDir, BanSeconds: 3600, Store: st})
+	e.restoreRateLimits()
+
+	data, _ := os.ReadFile(accessFile)
+	if strings.Contains(string(data), "user@domain.com") {
+		t.Error("el rate-limit vencido debe limpiarse del access file al arrancar")
+	}
+	if !strings.Contains(string(data), "otro@d.com") {
+		t.Error("las demás cuentas no deben tocarse")
+	}
+	if recs, _ := st.LoadRateLimits(); len(recs) != 0 {
+		t.Errorf("el registro persistido vencido debe eliminarse: %v", recs)
+	}
+}
+
+func TestRestoreRateLimitsConservaVigentes(t *testing.T) {
+	sbinDir := setupFakeBin(t, "postmap")
+	confDir := t.TempDir()
+	accessFile := filepath.Join(confDir, "sendguard_access")
+	os.WriteFile(accessFile,
+		[]byte("user@domain.com REJECT SendGuard: limite de envio excedido\n"), 0644)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.SaveRateLimit("user@domain.com", time.Now().Add(time.Hour)) // vigente
+
+	e := New(Config{PostfixSbin: sbinDir, PostfixConf: confDir, BanSeconds: 3600, Store: st})
+	e.restoreRateLimits()
+
+	data, _ := os.ReadFile(accessFile)
+	if !strings.Contains(string(data), "user@domain.com") {
+		t.Error("un rate-limit vigente no debe limpiarse al arrancar")
+	}
+	if recs, _ := st.LoadRateLimits(); len(recs) != 1 {
+		t.Errorf("el registro vigente debe conservarse: %v", recs)
+	}
+}

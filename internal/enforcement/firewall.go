@@ -115,10 +115,23 @@ func parseFirewallRule(line string) string {
 
 type ufwFW struct{}
 
-// Block agrega una regla de denegación. ufw no soporta --timeout nativo;
-// la expiración la gestiona el enforcer con runUnbanLoop.
+// Block agrega una regla de denegación AL INICIO de la lista (insert 1).
+// ufw evalúa en orden y gana la primera coincidencia: un deny añadido al final
+// (ufw deny a secas) queda detrás de los allow de los puertos de correo
+// (25/465/587/993) y no bloquea nada en un mail server. ufw no soporta
+// --timeout nativo; la expiración la gestiona el enforcer con runUnbanLoop.
 func (f *ufwFW) Block(ctx context.Context, ip string, _ int) error {
-	cmd := exec.CommandContext(ctx, "ufw", "deny", "from", ip, "to", "any")
+	cmd := exec.CommandContext(ctx, "ufw", "insert", "1", "deny", "from", ip, "to", "any")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	// "Invalid position" = aún no hay reglas numeradas; solo ahí el append
+	// simple es equivalente al insert.
+	if !strings.Contains(string(out), "Invalid position") {
+		return fmt.Errorf("ufw insert 1 deny %s: %w — %s", ip, err, bytes.TrimSpace(out))
+	}
+	cmd = exec.CommandContext(ctx, "ufw", "deny", "from", ip, "to", "any")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ufw deny %s: %w — %s", ip, err, bytes.TrimSpace(out))
 	}

@@ -15,7 +15,6 @@ func TestDefaultValues(t *testing.T) {
 		want any
 	}{
 		{"Zimbra.Logs.Main", cfg.Zimbra.Logs.Main, "/var/log/mail.log"},
-		{"Zimbra.Workers", cfg.Zimbra.Workers, 4},
 		{"Rules.AuthFailed.MaxFailures", cfg.Rules.AuthFailed.MaxFailures, 5},
 		{"Rules.AuthFailed.ScanTime", cfg.Rules.AuthFailed.ScanTime, 300},
 		{"Rules.NumberMessages.MaxMessages", cfg.Rules.NumberMessages.MaxMessages, 100},

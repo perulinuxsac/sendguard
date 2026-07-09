@@ -2,6 +2,7 @@ package notify_test
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -120,5 +121,69 @@ func TestThrottle_VentanaGlobalReset(t *testing.T) {
 
 	if got := inner.calls.Load(); got != 3 {
 		t.Errorf("esperadas 3 (2 + 1 tras reset), got %d", got)
+	}
+}
+
+// ── Correcciones de la auditoría jul-2026 ─────────────────────────────────────
+
+type flakyNotifier struct {
+	calls atomic.Int64
+	fail  atomic.Bool
+}
+
+func (f *flakyNotifier) Notify(_ context.Context, _ detection.Alert) error {
+	f.calls.Add(1)
+	if f.fail.Load() {
+		return errors.New("canal caído")
+	}
+	return nil
+}
+
+func TestThrottle_FalloDeEnvioNoConsumeCooldown(t *testing.T) {
+	// Un fallo transitorio del canal no debe suprimir la alerta durante todo el
+	// cooldown: el reintento inmediato tiene que poder pasar.
+	inner := &flakyNotifier{}
+	inner.fail.Store(true)
+	th := notify.NewThrottled(inner, notify.ThrottleConfig{KeyCooldown: time.Minute})
+	ctx := context.Background()
+
+	a := alert("1.2.3.4", "user@d.com", "auth_failed")
+	if err := th.Notify(ctx, a); err == nil {
+		t.Fatal("el error del canal debe propagarse")
+	}
+
+	inner.fail.Store(false)
+	if err := th.Notify(ctx, a); err != nil {
+		t.Fatalf("el reintento tras el fallo debe pasar: %v", err)
+	}
+	if got := inner.calls.Load(); got != 2 {
+		t.Errorf("llamadas al canal: got %d, want 2", got)
+	}
+
+	// Ahora sí: el envío exitoso activó el cooldown.
+	th.Notify(ctx, a)
+	if got := inner.calls.Load(); got != 2 {
+		t.Errorf("tras el éxito el cooldown debe aplicar: got %d llamadas, want 2", got)
+	}
+}
+
+func TestThrottle_CuentasDistintasMismaIPNoSeSilencian(t *testing.T) {
+	// Incidente masivo: varias cuentas suspendidas desde la misma IP atacante.
+	// Cada cuenta debe notificarse; solo las repeticiones exactas se suprimen.
+	inner := &countNotifier{}
+	th := notify.NewThrottled(inner, notify.ThrottleConfig{KeyCooldown: time.Minute})
+	ctx := context.Background()
+
+	a1 := detection.Alert{IP: "1.2.3.4", Account: "a@d.com", Module: "number_messages",
+		Action: detection.ActionSuspendAcct, Timestamp: time.Now()}
+	a2 := detection.Alert{IP: "1.2.3.4", Account: "b@d.com", Module: "number_messages",
+		Action: detection.ActionSuspendAcct, Timestamp: time.Now()}
+
+	th.Notify(ctx, a1) // pasa
+	th.Notify(ctx, a2) // pasa (cuenta distinta, misma IP)
+	th.Notify(ctx, a1) // suprimida (repetición exacta)
+
+	if got := inner.calls.Load(); got != 2 {
+		t.Errorf("esperadas 2 notificaciones (una por cuenta), got %d", got)
 	}
 }

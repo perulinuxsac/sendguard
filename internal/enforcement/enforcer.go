@@ -63,6 +63,19 @@ type Config struct {
 	NotifyOnActions []string // vacío = notificar todo
 }
 
+// actionTimeout acota cada comando externo (firewall-cmd, zmprov, postmap…)
+// del path automático de alertas. handle() corre en un único goroutine: sin
+// límite, un comando colgado congela toda la contención para siempre (alertCh
+// se llena y las alertas siguientes se descartan). 2 min cubre con holgura los
+// firewall-cmd lentos observados en hosts con miles de rich rules.
+const actionTimeout = 2 * time.Minute
+
+// actionCtx deriva un contexto con actionTimeout manteniendo la cancelación
+// del padre (el shutdown del agente debe seguir matando comandos en curso).
+func actionCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, actionTimeout)
+}
+
 // blockedIP registra cuándo expira el baneo de una IP para evitar
 // llamadas duplicadas al firewall.
 type blockedIP struct {
@@ -173,7 +186,7 @@ func (e *Enforcer) unbanExpired(ctx context.Context) {
 		// firewalld-ipset no tienen expiración nativa y requieren eliminar
 		// la regla/entrada explícitamente.
 		if e.needsExplicitUnban() {
-			if err := e.fw.Unblock(ctx, ip); err != nil {
+			if err := e.unblockWithTimeout(ctx, ip); err != nil {
 				slog.Warn("enforcement: fallo al desbloquear IP expirada", "ip", ip, "error", err)
 			} else {
 				slog.Info("enforcement: ban expirado, IP desbloqueada", "ip", ip)
@@ -234,7 +247,7 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 			alert.Reasons = append(alert.Reasons, "⚠ rate-limit omitido: postfix_sbin/postfix_conf sin configurar")
 			break
 		}
-		if err := rateLimit(ctx, alert.Account, e.cfg.BanSeconds, e.cfg.PostfixSbin, e.cfg.PostfixConf); err != nil {
+		if err := e.applyRateLimit(ctx, alert.Account); err != nil {
 			slog.Error("enforcement: fallo al aplicar rate-limit",
 				"account", alert.Account, "error", err)
 			alert.Reasons = append(alert.Reasons, fmt.Sprintf("⚠ fallo rate-limit: %v", err))
@@ -255,7 +268,9 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 			alert.Reasons = append(alert.Reasons, "⚠ purga de cola omitida: postfix_sbin/postfix_conf sin configurar")
 			break
 		}
-		n, err := purgeQueueDomain(ctx, domain, e.cfg.PostfixSbin, e.cfg.PostfixConf)
+		purgeCtx, cancel := actionCtx(ctx)
+		n, err := purgeQueueDomain(purgeCtx, domain, e.cfg.PostfixSbin, e.cfg.PostfixConf)
+		cancel()
 		if err != nil {
 			slog.Error("enforcement: fallo al purgar cola", "domain", domain, "error", err)
 			alert.Reasons = append(alert.Reasons, fmt.Sprintf("⚠ fallo al purgar cola: %v", err))
@@ -319,14 +334,17 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 
 // blockIP bloquea una IP usando el BanSeconds configurado globalmente.
 func (e *Enforcer) blockIP(ctx context.Context, alert detection.Alert) {
-	e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds)
+	if err := e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds); err != nil {
+		slog.Error("enforcement: fallo al bloquear IP", "ip", alert.IP, "error", err)
+	}
 }
 
 // blockIPWithTTL bloquea una IP o un CIDR con un TTL explícito (0 = permanente).
-func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, banSecs int) {
+// Retorna nil en las omisiones deliberadas (IP privada, país permitido, ya
+// bloqueada) y error solo cuando el bloqueo se intentó y falló.
+func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, banSecs int) error {
 	if !ValidBlockTarget(alert.IP) {
-		slog.Error("enforcement: IP/CIDR inválido, no se bloqueará", "ip", alert.IP)
-		return
+		return fmt.Errorf("IP/CIDR inválido: %s", alert.IP)
 	}
 	// Canonicalizar CIDRs ("200.25.47.5/24" → "200.25.47.0/24") para que la
 	// deduplicación, el firewall y el unblock posterior usen la misma clave.
@@ -339,7 +357,7 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 	if isPrivateIP(baseIP(alert.IP)) {
 		slog.Warn("enforcement: IP privada/local, bloqueo de firewall omitido",
 			"ip", alert.IP, "module", alert.Module)
-		return
+		return nil
 	}
 
 	// País permitido: no se bloquea en el firewall, no se persiste en SQLite y NO
@@ -357,14 +375,14 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		country := e.cfg.GeoResolver.Country(baseIP(alert.IP))
 		slog.Info("enforcement: IP de país permitido, bloqueo de firewall omitido",
 			"ip", alert.IP, "country", country, "module", alert.Module)
-		return
+		return nil
 	}
 
 	e.mu.Lock()
 	if entry, exists := e.blockedIPs[alert.IP]; exists && time.Now().Before(entry.expiry) {
 		e.mu.Unlock()
 		slog.Info("enforcement: IP ya bloqueada, omitiendo duplicado", "ip", alert.IP, "expiry", entry.expiry.Format("15:04:05"))
-		return
+		return nil
 	}
 	var expiry time.Time
 	if banSecs > 0 {
@@ -400,8 +418,10 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		}
 	}
 
-	if err := e.fw.Block(ctx, alert.IP, banSecs); err != nil {
-		slog.Error("enforcement: fallo al bloquear IP", "ip", alert.IP, "error", err)
+	fwCtx, cancel := actionCtx(ctx)
+	err := e.fw.Block(fwCtx, alert.IP, banSecs)
+	cancel()
+	if err != nil {
 		e.mu.Lock()
 		delete(e.blockedIPs, alert.IP)
 		delete(e.blockedNets, alert.IP)
@@ -409,7 +429,7 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		if e.cfg.Store != nil {
 			e.cfg.Store.DeleteBan(alert.IP)
 		}
-		return
+		return fmt.Errorf("firewall: %w", err)
 	}
 
 	e.blocksTotal.Add(1)
@@ -424,6 +444,7 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 	if e.cfg.Whitelist != nil {
 		_ = e.cfg.Whitelist.AddIP(alert.IP)
 	}
+	return nil
 }
 
 // suspendAccount suspende una cuenta Zimbra vía zmprov y bloquea la IP atacante si está presente.
@@ -436,12 +457,33 @@ func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 			"ip", alert.IP, "country", country, "account", alert.Account, "module", alert.Module)
 		return
 	}
+
+	// Dedup: si la cuenta ya fue suspendida en esta sesión, no re-ejecutar zmprov
+	// ni reenviar el aviso al usuario (alertas repetidas durante un ataque
+	// sostenido generaban correos duplicados). La IP de la alerta sí se bloquea:
+	// puede ser un atacante nuevo sobre la misma cuenta.
+	e.mu.Lock()
+	_, alreadySuspended := e.suspendedAccts[alert.Account]
+	e.mu.Unlock()
+	if alreadySuspended {
+		slog.Info("enforcement: cuenta ya suspendida, omitiendo re-suspensión",
+			"account", alert.Account, "module", alert.Module)
+		if alert.IP != "" {
+			if err := e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds); err != nil {
+				slog.Error("enforcement: fallo al bloquear IP de la alerta", "ip", alert.IP, "error", err)
+			}
+		}
+		return
+	}
+
 	zmprov := e.cfg.ZmprovBin
 	if zmprov == "" {
 		zmprov = "/opt/zimbra/bin/zmprov"
 	}
-	cmd := exec.CommandContext(ctx, zmprov, "ma", alert.Account, "zimbraAccountStatus", "locked")
+	zmCtx, cancel := actionCtx(ctx)
+	cmd := exec.CommandContext(zmCtx, zmprov, "ma", alert.Account, "zimbraAccountStatus", "locked")
 	out, err := cmd.CombinedOutput()
+	cancel()
 	if err != nil {
 		slog.Error("enforcement: fallo al suspender cuenta",
 			"account", alert.Account,
@@ -470,7 +512,93 @@ func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 
 	// Bloquear también la IP atacante en el firewall si está presente en la alerta.
 	if alert.IP != "" {
-		e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds)
+		if err := e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds); err != nil {
+			slog.Error("enforcement: fallo al bloquear IP de la alerta", "ip", alert.IP, "error", err)
+		}
+	}
+}
+
+// unblockWithTimeout elimina la regla del firewall acotada por actionTimeout.
+// Se usa en el loop de expiración, que corre con el contexto raíz del agente.
+func (e *Enforcer) unblockWithTimeout(ctx context.Context, ip string) error {
+	ctx, cancel := actionCtx(ctx)
+	defer cancel()
+	return e.fw.Unblock(ctx, ip)
+}
+
+// applyRateLimit aplica el REJECT en el access file, persiste la expiración en
+// SQLite y programa la eliminación. La persistencia es lo que evita que un
+// reinicio del agente deje a la cuenta limitada para siempre (la entrada del
+// access file sobrevive en disco; el AfterFunc no).
+func (e *Enforcer) applyRateLimit(ctx context.Context, account string) error {
+	rlCtx, cancel := actionCtx(ctx)
+	err := rateLimit(rlCtx, account, e.cfg.PostfixSbin, e.cfg.PostfixConf)
+	cancel()
+	if err != nil {
+		return err
+	}
+	e.scheduleRateLimitExpiry(account, e.cfg.BanSeconds)
+	return nil
+}
+
+// scheduleRateLimitExpiry persiste y programa la expiración del rate-limit.
+// banSecs <= 0 significa permanente: no hay nada que programar ni persistir
+// (la entrada del access file ya sobrevive sola en disco).
+func (e *Enforcer) scheduleRateLimitExpiry(account string, banSecs int) {
+	if banSecs <= 0 {
+		return
+	}
+	expiry := time.Now().Add(time.Duration(banSecs) * time.Second)
+	if e.cfg.Store != nil {
+		if err := e.cfg.Store.SaveRateLimit(account, expiry); err != nil {
+			slog.Warn("enforcement: no se pudo persistir rate-limit", "account", account, "error", err)
+		}
+	}
+	time.AfterFunc(time.Until(expiry), func() { e.expireRateLimit(account) })
+}
+
+// expireRateLimit limpia la entrada del access file y, solo si la limpieza tuvo
+// éxito, elimina el registro persistido — si falla, el registro queda y el
+// próximo arranque del agente reintenta la limpieza.
+func (e *Enforcer) expireRateLimit(account string) {
+	if err := removeRateLimit(account, e.cfg.PostfixSbin, e.cfg.PostfixConf); err != nil {
+		slog.Warn("enforcement: fallo al limpiar rate-limit expirado (se reintentará al reiniciar)",
+			"account", account, "error", err)
+		return
+	}
+	if e.cfg.Store != nil {
+		if err := e.cfg.Store.DeleteRateLimit(account); err != nil {
+			slog.Warn("enforcement: no se pudo eliminar rate-limit persistido", "account", account, "error", err)
+		}
+	}
+}
+
+// restoreRateLimits reprograma al arrancar las expiraciones de rate-limit
+// persistidas: limpia inmediatamente las ya vencidas y agenda las vigentes.
+func (e *Enforcer) restoreRateLimits() {
+	if e.cfg.Store == nil {
+		return
+	}
+	records, err := e.cfg.Store.LoadRateLimits()
+	if err != nil {
+		slog.Warn("enforcement: no se pudo leer rate-limits persistidos", "error", err)
+		return
+	}
+	now := time.Now()
+	restored, expired := 0, 0
+	for _, r := range records {
+		if r.ExpiresAt.After(now) {
+			acct := r.Account
+			time.AfterFunc(r.ExpiresAt.Sub(now), func() { e.expireRateLimit(acct) })
+			restored++
+		} else {
+			e.expireRateLimit(r.Account)
+			expired++
+		}
+	}
+	if restored > 0 || expired > 0 {
+		slog.Info("enforcement: rate-limits restaurados desde SQLite",
+			"vigentes", restored, "expirados_limpiados", expired)
 	}
 }
 
@@ -657,10 +785,18 @@ func (e *Enforcer) needsExplicitUnban() bool {
 // siguen vigentes.
 func (e *Enforcer) LoadExistingBans(ctx context.Context) {
 	if s, ok := e.fw.(fwSetup); ok {
-		if err := s.Setup(ctx); err != nil {
+		setupCtx, cancel := actionCtx(ctx)
+		err := s.Setup(setupCtx)
+		cancel()
+		if err != nil {
 			slog.Error("enforcement: fallo al inicializar el backend de firewall", "error", err)
 		}
 	}
+
+	// Restaurar también las expiraciones de rate-limit persistidas: las entradas
+	// REJECT de sendguard_access sobreviven en disco y sin esto quedarían
+	// permanentes tras un reinicio del agente.
+	e.restoreRateLimits()
 
 	if e.cfg.Store != nil {
 		if _, ok := e.loadBansFromStore(); ok {
@@ -698,7 +834,10 @@ func (e *Enforcer) resyncFirewall(ctx context.Context) {
 
 	synced := 0
 	for ip, banSecs := range targets {
-		if err := e.fw.Block(ctx, ip, banSecs); err != nil {
+		blockCtx, cancel := actionCtx(ctx)
+		err := e.fw.Block(blockCtx, ip, banSecs)
+		cancel()
+		if err != nil {
 			slog.Warn("enforcement: resync: no se pudo re-aplicar ban", "ip", ip, "error", err)
 			continue
 		}
@@ -744,7 +883,9 @@ func (e *Enforcer) loadBansFromStore() (int, bool) {
 // Se usa como fallback cuando SQLite no está disponible.
 // El nombre se mantiene por compatibilidad con los tests existentes.
 func (e *Enforcer) loadBansFromFirewalld(ctx context.Context) {
-	ips, err := e.fw.ListBlockedIPs(ctx)
+	listCtx, cancel := actionCtx(ctx)
+	ips, err := e.fw.ListBlockedIPs(listCtx)
+	cancel()
 	if err != nil {
 		slog.Warn("enforcement: no se pudo leer reglas existentes del firewall", "error", err)
 		return
@@ -813,7 +954,10 @@ func (e *Enforcer) Block(ctx context.Context, ip string, ttlOverride int) error 
 		Action:    detection.ActionBlockIP,
 		Timestamp: time.Now(),
 	}
-	e.blockIPWithTTL(ctx, alert, banSecs)
+	if err := e.blockIPWithTTL(ctx, alert, banSecs); err != nil {
+		// Propagar: la API/ctl no deben reportar "bloqueada" si el firewall falló.
+		return err
+	}
 	if e.cfg.AuditLog != nil {
 		e.cfg.AuditLog.Log(ctx, alert)
 	}
@@ -829,6 +973,10 @@ func (e *Enforcer) Unsuspend(ctx context.Context, account string) error {
 	if zmprov == "" {
 		zmprov = "/opt/zimbra/bin/zmprov"
 	}
+	// Mismo desacople que Block/Unblock: zmprov no debe morir con el timeout
+	// del request HTTP ni colgarse sin límite.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), actionTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, zmprov, "ma", account, "zimbraAccountStatus", "active")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

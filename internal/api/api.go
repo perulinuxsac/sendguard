@@ -435,6 +435,16 @@ func (s *Server) handleWhitelistGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ips, accounts := s.deps.Whitelist.List()
+	// El enforcer añade cada IP bloqueada a la whitelist del engine (solo para
+	// silenciar sus eventos mientras dura el ban) y la quita al expirar. No son
+	// whitelist real del operador: se excluyen del listado para no confundir.
+	filtered := ips[:0]
+	for _, ip := range ips {
+		if !s.deps.Enforcer.IsBlocked(strings.TrimSuffix(ip, "/32")) {
+			filtered = append(filtered, ip)
+		}
+	}
+	ips = filtered
 	if ips == nil {
 		ips = []string{}
 	}

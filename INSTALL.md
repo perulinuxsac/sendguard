@@ -232,7 +232,6 @@ zimbra:
   logs:
     main: "/var/log/mail.log"          # RHEL: /var/log/maillog
     mailbox: "/opt/zimbra/log/mailbox.log"  # optional; omit or leave blank to disable
-  workers: 4
   postfix_sbin: "/opt/zimbra/common/sbin"  # or /opt/zimbra/postfix/sbin
   postfix_conf: "/opt/zimbra/common/conf"  # or /opt/zimbra/postfix/conf
 

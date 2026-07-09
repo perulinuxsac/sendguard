@@ -79,7 +79,6 @@ sendguard_api_key: ""
 sendguard_policyd_listen: "127.0.0.1:9100"
 sendguard_daily_report_hour: 8
 sendguard_local_db_max_size_mb: 100
-sendguard_zimbra_workers: 4
 
 # ── Umbrales de los módulos de detección ─────────────────────────────────────
 sendguard_rules:

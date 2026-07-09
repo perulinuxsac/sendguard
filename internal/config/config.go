@@ -55,7 +55,6 @@ type APIConf struct {
 
 type ZimbraConf struct {
 	Logs        LogPaths `yaml:"logs"`
-	Workers     int      `yaml:"workers"`
 	ZmprovBin   string   `yaml:"zmprov_bin"`   // ruta completa a zmprov (default: /opt/zimbra/bin/zmprov)
 	PostfixSbin string   `yaml:"postfix_sbin"` // dir de binarios de Postfix de Zimbra
 	PostfixConf string   `yaml:"postfix_conf"` // dir de configuración de Postfix de Zimbra
@@ -210,7 +209,6 @@ func Default() *Config {
 	cfg := &Config{}
 	cfg.Zimbra.Logs.Main = "/var/log/mail.log"
 	cfg.Zimbra.Logs.Mailbox = "/opt/zimbra/log/mailbox.log"
-	cfg.Zimbra.Workers = 4
 	cfg.Zimbra.ZmprovBin = "/opt/zimbra/bin/zmprov"
 	cfg.Zimbra.PostfixSbin = "/opt/zimbra/common/sbin"
 	cfg.Zimbra.PostfixConf = "/opt/zimbra/common/conf"

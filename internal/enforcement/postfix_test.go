@@ -108,6 +108,19 @@ EEFF001122!     200 Mon Jan  1 00:01:00  s@s.com
 	}
 }
 
+func TestExtractQueueIDsNoMatcheaDominioEmbebido(t *testing.T) {
+	// "user@example.com.evil.net" contiene "@example.com" pero NO es el dominio
+	// example.com — el match debe ser por sufijo exacto, no por subcadena.
+	data := []byte(`
+Z9Y8X7W6V*      100 Sat May 11 10:03:00  spam@source.com
+                                         user@example.com.evil.net
+
+`)
+	if ids := extractQueueIDs(data, "example.com"); len(ids) != 0 {
+		t.Errorf("example.com.evil.net no debe matchear example.com: %v", ids)
+	}
+}
+
 func TestExtractQueueIDsCaseInsensitive(t *testing.T) {
 	data := []byte(`
 CASEID00001*     100 Mon Jan  1 00:00:00  s@s.com

@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 )
 
 // accessFileMu serializa lecturas y escrituras concurrentes de sendguard_access
@@ -83,9 +82,11 @@ func extractQueueIDs(data []byte, domain string) []string {
 		// Línea de destinatario (empieza por espacio); ignorar líneas de error '(…)'
 		// Postfix indenta las líneas de error con espacios antes del '(', por lo que
 		// line[0] es espacio — hay que verificar el primer carácter sin espacios.
+		// HasSuffix (no Contains): el dominio es el último componente de la dirección,
+		// y con Contains "user@cliente.pe.evil.net" matchearía "@cliente.pe".
 		if currentID != "" {
 			trimmed := strings.TrimSpace(line)
-			if trimmed != "" && trimmed[0] != '(' && strings.Contains(strings.ToLower(trimmed), suffix) {
+			if trimmed != "" && trimmed[0] != '(' && strings.HasSuffix(strings.ToLower(trimmed), suffix) {
 				ids = append(ids, currentID)
 				// Resetear para no agregar el mismo ID por múltiples rcpt del mismo dominio.
 				currentID = ""
@@ -97,7 +98,8 @@ func extractQueueIDs(data []byte, domain string) []string {
 
 // rateLimit agrega una cuenta a la tabla de acceso de Zimbra/Postfix y
 // reconstruye el mapa con postmap (como root) para que el rechazo sea inmediato.
-// Si banSeconds > 0, programa la eliminación automática de la entrada.
+// La expiración de la entrada NO se programa aquí: el Enforcer la persiste en
+// SQLite y la programa (applyRateLimit), para que sobreviva reinicios del agente.
 //
 // El access file se crea en confDir/sendguard_access.
 // Requiere que el administrador haya configurado una vez:
@@ -106,7 +108,7 @@ func extractQueueIDs(data []byte, domain string) []string {
 //	    "check_sender_access lmdb:<confDir>/sendguard_access" \
 //	    "permit_sasl_authenticated" \
 //	    "reject_unauthenticated_sender_login_mismatch"
-func rateLimit(ctx context.Context, account string, banSeconds int, sbinDir, confDir string) error {
+func rateLimit(ctx context.Context, account string, sbinDir, confDir string) error {
 	accessFile := filepath.Join(confDir, "sendguard_access")
 	prefix := account + " "
 	entry := account + " REJECT SendGuard: limite de envio excedido\n"
@@ -120,11 +122,6 @@ func rateLimit(ctx context.Context, account string, banSeconds int, sbinDir, con
 	// expiración (removeRateLimit borra por prefijo) levantaría el límite de todas.
 	if existing, err := os.ReadFile(accessFile); err == nil && hasAccountEntry(existing, prefix) {
 		accessFileMu.Unlock()
-		if banSeconds > 0 {
-			time.AfterFunc(time.Duration(banSeconds)*time.Second, func() {
-				removeRateLimit(account, sbinDir, confDir)
-			})
-		}
 		return nil
 	}
 
@@ -145,12 +142,6 @@ func rateLimit(ctx context.Context, account string, banSeconds int, sbinDir, con
 	accessFileMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("postmap lmdb:%s: %w (output: %s)", accessFile, err, string(out))
-	}
-
-	if banSeconds > 0 {
-		time.AfterFunc(time.Duration(banSeconds)*time.Second, func() {
-			removeRateLimit(account, sbinDir, confDir)
-		})
 	}
 	return nil
 }
@@ -235,8 +226,9 @@ func hasAccountEntry(data []byte, prefix string) bool {
 }
 
 // removeRateLimit elimina la línea del account del access file y regenera el mapa.
-// Se llama desde un time.AfterFunc cuando expira el ban.
-func removeRateLimit(account, sbinDir, confDir string) {
+// Se llama al expirar el ban (Enforcer.expireRateLimit). Retorna error para que
+// el llamante decida si conservar el registro persistido y reintentar después.
+func removeRateLimit(account, sbinDir, confDir string) error {
 	accessFile := filepath.Join(confDir, "sendguard_access")
 	prefix := account + " "
 
@@ -245,9 +237,10 @@ func removeRateLimit(account, sbinDir, confDir string) {
 
 	data, err := os.ReadFile(accessFile)
 	if err != nil {
-		slog.Warn("enforcement: no se pudo leer access file para limpiar rate-limit",
-			"account", account, "error", err)
-		return
+		if os.IsNotExist(err) {
+			return nil // sin access file no hay nada que limpiar
+		}
+		return fmt.Errorf("leer access file: %w", err)
 	}
 
 	var filtered []byte
@@ -259,20 +252,17 @@ func removeRateLimit(account, sbinDir, confDir string) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		slog.Warn("enforcement: error leyendo access file, se cancela la limpieza de rate-limit",
-			"account", account, "error", err)
-		return
+		return fmt.Errorf("leer access file: %w", err)
 	}
 
 	if err := os.WriteFile(accessFile, filtered, 0644); err != nil {
-		slog.Warn("enforcement: no se pudo actualizar access file", "account", account, "error", err)
-		return
+		return fmt.Errorf("actualizar access file: %w", err)
 	}
 
 	postmap := filepath.Join(sbinDir, "postmap")
 	if err := exec.Command(postmap, "lmdb:"+accessFile).Run(); err != nil {
-		slog.Warn("enforcement: postmap falló al limpiar rate-limit", "account", account, "error", err)
-		return
+		return fmt.Errorf("postmap: %w", err)
 	}
 	slog.Info("enforcement: rate-limit eliminado", "account", account)
+	return nil
 }

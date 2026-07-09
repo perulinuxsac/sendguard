@@ -16,7 +16,7 @@ func TestRateLimitEscribeAccessFileYLlamaPostmap(t *testing.T) {
 	sbinDir := setupFakeBin(t, "postmap")
 	confDir := t.TempDir()
 
-	err := rateLimit(context.Background(), "user@domain.com", 0, sbinDir, confDir)
+	err := rateLimit(context.Background(), "user@domain.com", sbinDir, confDir)
 	if err != nil {
 		t.Fatalf("rateLimit: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestRateLimitSinPostmap(t *testing.T) {
 	sbinDir := t.TempDir() // sin postmap → debe retornar error
 	confDir := t.TempDir()
 
-	err := rateLimit(context.Background(), "user@domain.com", 0, sbinDir, confDir)
+	err := rateLimit(context.Background(), "user@domain.com", sbinDir, confDir)
 	if err == nil {
 		t.Error("sin postmap debe retornar error")
 	}
@@ -47,7 +47,7 @@ func TestRateLimitAccessFileNoEscribible(t *testing.T) {
 	sbinDir := setupFakeBin(t, "postmap")
 	confDir := "/no/existe/directorio/que/no/puede/crearse"
 
-	err := rateLimit(context.Background(), "user@domain.com", 0, sbinDir, confDir)
+	err := rateLimit(context.Background(), "user@domain.com", sbinDir, confDir)
 	if err == nil {
 		t.Error("directorio inaccesible debe retornar error")
 	}
