@@ -9,6 +9,56 @@ Las versiones v1.0.6 – v1.0.10 surgieron de la respuesta a un incidente de
 compromiso masivo de cuentas en `webmail.perucloud.pe` (12 jun 2026), en el
 que cuentas hackeadas enviaban spam falseando el `From` del sobre.
 
+## [1.0.12] - 2026-07-09
+
+Segunda tanda de correcciones de la auditoría de código interna (revisión
+completa de los 15 paquetes, los 3 binarios y el deploy).
+
+### Corregido
+- **ufw: los bloqueos ahora se insertan al INICIO de la lista de reglas**
+  (`ufw insert 1`). `ufw deny` a secas añade la regla al final, detrás de los
+  `allow` de los puertos de correo, y como ufw aplica la primera coincidencia
+  la IP "bloqueada" seguía conectando a 25/465/587/993 — en hosts ufw la
+  contención de firewall era inefectiva. Con cero reglas numeradas se cae al
+  append simple (único caso equivalente).
+- **Los rate-limits sobreviven reinicios del agente.** La expiración vivía
+  solo en un `time.AfterFunc` en memoria mientras la entrada REJECT de
+  `sendguard_access` persiste en disco: tras un restart (p. ej. cada redeploy
+  de Ansible) la cuenta quedaba sin poder enviar indefinidamente. Ahora la
+  expiración se persiste en SQLite (tabla `rate_limits`); al arrancar se
+  limpian las vencidas y se reprograman las vigentes.
+- **Timeout (2 min) en todos los comandos del path automático de alertas**
+  (zmprov, firewall-cmd, ufw, postmap, postqueue/postsuper). `handle()` corre
+  en un único goroutine: sin límite, un comando colgado congelaba toda la
+  contención para siempre y las alertas siguientes se descartaban en silencio.
+  Los paths manuales ya lo tenían; `Unsuspend` ahora también se desacopla del
+  request HTTP como Block/Unblock.
+- **`Block()` manual propaga el fallo del firewall**: la API y el ctl ya no
+  reportan "bloqueada" cuando `firewall-cmd`/`ufw` fallaron (el estado interno
+  se revierte, como antes).
+- **El throttle de notificaciones consume el cooldown solo tras un envío
+  exitoso** — un fallo transitorio de sendmail/Telegram ya no suprime la
+  alerta durante 5 minutos — **y la clave de cooldown ahora es
+  acción+IP+cuenta**: antes era IP-primero y en un incidente con varias
+  cuentas comprometidas desde la misma IP solo se notificaba la primera.
+- **`suspendAccount` depura repeticiones**: alertas repetidas sobre una cuenta
+  ya suspendida no re-ejecutan zmprov ni reenvían el aviso al usuario
+  (correos duplicados); la IP de la alerta sí se sigue bloqueando.
+- La purga de cola por dominio matchea el dominio del destinatario por
+  sufijo exacto (`@dominio`), no por subcadena: `user@cliente.pe.evil.net`
+  ya no cuenta como `cliente.pe`.
+- `GET /whitelist` excluye las IPs actualmente bloqueadas (el enforcer las
+  añade a la whitelist del engine solo para silenciar sus eventos durante el
+  ban; no son whitelist del operador y verlas ahí confundía).
+
+### Seguridad
+- El aviso al usuario suspendido pasa el destinatario a sendmail tras `--`,
+  de modo que una cuenta que empiece con `-` no se interprete como opción.
+
+### Eliminado
+- `zimbra.workers` (config y variable de Ansible `sendguard_zimbra_workers`):
+  configuración muerta, no se usaba en ningún sitio.
+
 ## [1.0.11] - 2026-07-09
 
 Correcciones surgidas de una auditoría de código interna.
