@@ -62,6 +62,11 @@ completa de los 15 paquetes, los 3 binarios y el deploy).
 - `GET /whitelist` excluye las IPs actualmente bloqueadas (el enforcer las
   añade a la whitelist del engine solo para silenciar sus eventos durante el
   ban; no son whitelist del operador y verlas ahí confundía).
+- **Un timer obsoleto de rate-limit ya no limpia una extensión posterior.**
+  Si una cuenta ya limitada recibía otra alerta, la expiración persistida se
+  extendía pero el `time.AfterFunc` original seguía vivo y quitaba el REJECT
+  del access file antes de tiempo. `expireRateLimit` ahora consulta la
+  expiración persistida y no actúa si sigue vigente.
 
 ### Seguridad
 - El aviso al usuario suspendido pasa el destinatario a sendmail tras `--`,
