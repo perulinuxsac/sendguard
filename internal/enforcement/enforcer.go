@@ -267,18 +267,25 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 		slog.Info("enforcement: notify_only — sin acción de contención")
 	}
 
+	// País permitido: la contención (bloqueo/suspensión/rate-limit) fue omitida
+	// en el método correspondiente, pero la alerta se registra y SE NOTIFICA:
+	// un atacante operando desde una IP nacional (o un VPS/VPN local) no debe
+	// pasar desapercibido. La marca deja claro que hace falta revisión manual.
+	if isContainmentAction(alert.Action) && e.isIPFromAllowedCountry(alert.IP) {
+		country := e.cfg.GeoResolver.Country(baseIP(alert.IP))
+		if alert.Country == "" {
+			alert.Country = country
+		}
+		alert.Reasons = append(alert.Reasons,
+			fmt.Sprintf("⚠ contención omitida: IP de país permitido (%s) — revisar manualmente", country))
+	}
+
 	if e.cfg.Forwarder != nil {
 		e.cfg.Forwarder.SaveAlert(alert)
 	}
 
 	if e.cfg.AuditLog != nil {
 		e.cfg.AuditLog.Log(ctx, alert)
-	}
-
-	// IPs de países permitidos: la contención ya fue omitida en blockIP/suspendAccount.
-	// Omitir también la notificación push para no generar ruido por IPs legítimas.
-	if e.isIPFromAllowedCountry(alert.IP) {
-		return
 	}
 
 	// Filtro de notificaciones push: si NotifyOnActions está configurado, solo
@@ -465,6 +472,16 @@ func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 	if alert.IP != "" {
 		e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds)
 	}
+}
+
+// isContainmentAction retorna true para las acciones que ejecutan contención
+// sobre el servidor (y que por tanto pueden haberse omitido por país permitido).
+func isContainmentAction(a detection.Action) bool {
+	switch a {
+	case detection.ActionBlockIP, detection.ActionSuspendAcct, detection.ActionRateLimit:
+		return true
+	}
+	return false
 }
 
 // isValidIP verifica que el string sea una dirección IPv4 válida.
