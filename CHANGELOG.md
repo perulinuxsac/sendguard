@@ -9,6 +9,47 @@ Las versiones v1.0.6 – v1.0.10 surgieron de la respuesta a un incidente de
 compromiso masivo de cuentas en `webmail.perucloud.pe` (12 jun 2026), en el
 que cuentas hackeadas enviaban spam falseando el `From` del sobre.
 
+## [1.2.0] - Sin publicar
+
+Correcciones de la auditoría completa del proyecto.
+
+### Corregido
+- **Bans perdidos en el firewall sin que el agente se entere.** Un
+  `firewall-cmd --reload`, un reinicio de firewalld o un arranque del agente
+  antes que el firewall borraban las reglas temporales, pero el agente seguía
+  considerando esas IPs bloqueadas y silenciadas: el atacante quedaba libre y
+  sin detección hasta que expiraba el ban. Ahora el agente concilia cada 2 min
+  (y al arrancar, en todos los backends): re-aplica con el TTL restante lo que
+  falte en el firewall y reintenta el Setup del ipset si falló. La unit
+  arranca `After=firewalld.service ufw.service`.
+- **`impossible_traveler` comparaba el país distinguiendo mayúsculas**: con
+  `allowed_countries: ["pe"]` la suspensión salía con la IP peruana del usuario
+  legítimo y el enforcer la omitía. Ahora compara sin distinguir y la config
+  normaliza `allowed_countries` a mayúsculas.
+- **Bloqueo manual permanente sobre un ban temporal**: la API respondía
+  "permanente" pero el ban seguía expirando. Ahora un bloqueo más largo extiende
+  el ban (en firewalld reemplaza la regla con `--timeout`).
+- **Expirar un ban borraba la exoneración del operador** para la misma IP. Las
+  IPs silenciadas por bans se guardan aparte de la whitelist del operador
+  (`Silence`/`Unsilence`); `GET /whitelist` muestra solo la del operador.
+- **ufw**: `ufw status` muestra la acción como `DENY` (no `DENY IN`) y el
+  listado de ufw salía vacío. Ahora acepta ambas y solo toma reglas
+  `deny from X to any` (no las del administrador con puerto).
+- **`install.sh`**: abortaba en hosts sin crontab de root y cuando no había
+  salida a MaxMind (`set -e`); ahora sigue y usa el fallback. En RHEL usaba
+  siempre rich rules: ahora usa `firewalld-ipset` (como Ansible) y en upgrades
+  respeta el backend ya configurado.
+- **`uninstall.sh`**: buscaba reglas que SendGuard no crea y no borraba el
+  ipset; en ufw se saltaba las reglas 1-9 y podía borrar reglas del
+  administrador. Ahora desbloquea vía el agente cada IP que él bloqueó, elimina
+  el ipset `sendguard` y solo lista (sin borrar) las reglas dudosas.
+
+### Cambiado
+- **`sasl_connections` cuenta solo logins SMTP** (Postfix). Los de IMAP/POP3/
+  SOAP de `mailbox.log` suspendían cuentas legítimas (Outlook con varias
+  sesiones, móviles con POP3). Con varias IPs en la ventana, la suspensión lleva
+  la primera de un país no permitido, no la del login que cruzó el umbral.
+
 ## [1.1.1] - 2026-09-28
 
 Correcciones de la migración de v1.1.0 (`remove_smtp_hooks.sh` y la

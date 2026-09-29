@@ -17,10 +17,17 @@ import (
 
 // Whitelist contiene IPs/CIDRs y cuentas exentas de detección.
 // Es thread-safe: puede modificarse en caliente desde la API HTTP.
+//
+// Además de la whitelist del operador (nets/accounts) guarda, por separado,
+// las IPs silenciadas por el enforcer mientras dura su ban (silenced): sus
+// eventos no se despachan, pero no son exoneraciones. Van aparte para que
+// expirar un ban no borre una entrada que el operador agregó para la misma IP,
+// y para que List() muestre solo lo que configuró el operador.
 type Whitelist struct {
 	mu       sync.RWMutex
 	nets     []*net.IPNet
 	accounts map[string]struct{}
+	silenced map[string]*net.IPNet // clave: CIDR canónico
 }
 
 // builtinNets son las redes privadas/locales siempre exentas de detección y
@@ -67,6 +74,7 @@ func BuiltinNets() []string {
 func NewWhitelist(ips []string, accounts []string) *Whitelist {
 	wl := &Whitelist{
 		accounts: make(map[string]struct{}, len(accounts)),
+		silenced: make(map[string]*net.IPNet),
 	}
 	for _, raw := range ips {
 		if !strings.ContainsRune(raw, '/') {
@@ -102,6 +110,11 @@ func (wl *Whitelist) ContainsIP(ip string) bool {
 			return true
 		}
 	}
+	for _, cidr := range wl.silenced {
+		if cidr.Contains(parsed) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -112,15 +125,49 @@ func (wl *Whitelist) ContainsAccount(account string) bool {
 	return ok
 }
 
-// AddIP agrega una IP o CIDR a la whitelist en caliente.
-func (wl *Whitelist) AddIP(ip string) error {
+// parseEntry convierte una IP o CIDR en *net.IPNet (IP suelta → /32).
+func parseEntry(ip string) (*net.IPNet, error) {
 	raw := ip
 	if !strings.ContainsRune(raw, '/') {
 		raw += "/32"
 	}
 	_, cidr, err := net.ParseCIDR(raw)
 	if err != nil {
-		return fmt.Errorf("IP/CIDR inválida: %s", ip)
+		return nil, fmt.Errorf("IP/CIDR inválida: %s", ip)
+	}
+	return cidr, nil
+}
+
+// Silence deja de despachar eventos de una IP/CIDR mientras dura su ban.
+// Es independiente de la whitelist del operador (ver Whitelist).
+func (wl *Whitelist) Silence(ip string) error {
+	cidr, err := parseEntry(ip)
+	if err != nil {
+		return err
+	}
+	wl.mu.Lock()
+	wl.silenced[cidr.String()] = cidr
+	wl.mu.Unlock()
+	return nil
+}
+
+// Unsilence vuelve a despachar eventos de una IP/CIDR al terminar su ban.
+// No toca la whitelist del operador.
+func (wl *Whitelist) Unsilence(ip string) {
+	cidr, err := parseEntry(ip)
+	if err != nil {
+		return
+	}
+	wl.mu.Lock()
+	delete(wl.silenced, cidr.String())
+	wl.mu.Unlock()
+}
+
+// AddIP agrega una IP o CIDR a la whitelist en caliente.
+func (wl *Whitelist) AddIP(ip string) error {
+	cidr, err := parseEntry(ip)
+	if err != nil {
+		return err
 	}
 	wl.mu.Lock()
 	wl.nets = append(wl.nets, cidr)
@@ -130,11 +177,7 @@ func (wl *Whitelist) AddIP(ip string) error {
 
 // RemoveIP elimina una IP o CIDR exacta de la whitelist.
 func (wl *Whitelist) RemoveIP(ip string) {
-	raw := ip
-	if !strings.ContainsRune(raw, '/') {
-		raw += "/32"
-	}
-	_, target, err := net.ParseCIDR(raw)
+	target, err := parseEntry(ip)
 	if err != nil {
 		return
 	}
@@ -163,7 +206,8 @@ func (wl *Whitelist) RemoveAccount(account string) {
 	wl.mu.Unlock()
 }
 
-// List retorna copias de los contenidos actuales de la whitelist.
+// List retorna copias de los contenidos actuales de la whitelist del operador
+// (no incluye las IPs silenciadas por bans activos).
 func (wl *Whitelist) List() (ips []string, accounts []string) {
 	wl.mu.RLock()
 	defer wl.mu.RUnlock()

@@ -320,6 +320,31 @@ func TestAttackerIPTargetedNotLegitUser(t *testing.T) {
 	}
 }
 
+// allowed_countries en minúsculas ("pe"): el país del usuario legítimo debe
+// seguir contando como permitido y la alerta debe apuntar a la IP atacante.
+func TestAllowedCountriesSinDistinguirMayusculas(t *testing.T) {
+	cfg := impossibletraveler.Config{
+		WindowMinutes:    30,
+		AllowedCountries: []string{"pe", " us "},
+	}
+	geo := &mockGeoIP{countries: map[string]string{
+		"49.12.77.100":    "CN", // atacante
+		"161.132.178.197": "PE", // usuario legítimo
+	}}
+	m := impossibletraveler.New(cfg, geo)
+	now := time.Now()
+
+	m.Handle(authEvent("maguilar@perulinux.pe", "49.12.77.100", now))
+	alerts := m.Handle(authEvent("maguilar@perulinux.pe", "161.132.178.197", now.Add(11*time.Minute)))
+
+	if len(alerts) != 1 {
+		t.Fatalf("se esperaba 1 alerta, got %d", len(alerts))
+	}
+	if alerts[0].IP != "49.12.77.100" {
+		t.Errorf("IP: got %q, want la atacante 49.12.77.100 (no la peruana)", alerts[0].IP)
+	}
+}
+
 // TestBothCountriesForeignBlocksBoth verifica que si ambos logins provienen de
 // países no permitidos se suspende la cuenta y se bloquean AMBAS IPs.
 func TestBothCountriesForeignBlocksBoth(t *testing.T) {

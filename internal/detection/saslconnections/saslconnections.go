@@ -10,22 +10,38 @@
 //     → botnet usando pocos nodos o una sola IP de forma intensiva.
 //     Acción: ActionSuspendAcct (score 65).
 //
-// Fuente: eventos AuthSuccess (postfix/smtpd con sasl_username).
+// Fuente: eventos AuthSuccess de Postfix (smtpd/submission con sasl_username).
+// Los logins IMAP/POP3/SOAP de mailbox.log se ignoran: un Outlook con varias
+// sesiones IMAP o un móvil que consulta POP3 cada minuto superan el umbral de
+// conexiones sin que haya abuso de envío.
+//
+// País de la alerta: el enforcer omite la suspensión si la IP de la alerta es
+// de un país permitido. Con varias IPs en la ventana, la alerta lleva la
+// primera IP de un país NO permitido (si hay Geo configurado); así no depende
+// de cuál login cruzó el umbral —que puede ser el del usuario legítimo—.
 package saslconnections
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/perulinux/sendguard/internal/detection"
 	"github.com/perulinux/sendguard/internal/event"
 )
 
+// CountryLookup resuelve una IP a su código de país ISO (mayúsculas).
+type CountryLookup interface {
+	Country(ip string) string
+}
+
 // Config agrupa los parámetros del módulo.
 type Config struct {
-	Max          int           // conexiones autenticadas totales por cuenta en ventana (0 = deshabilitado)
-	MaxUniqueIPs int           // IPs distintas por cuenta en ventana para bloquear (0 = deshabilitado)
-	ScanTime     time.Duration // ventana de observación
+	Max              int           // conexiones autenticadas totales por cuenta en ventana (0 = deshabilitado)
+	MaxUniqueIPs     int           // IPs distintas por cuenta en ventana para bloquear (0 = deshabilitado)
+	ScanTime         time.Duration // ventana de observación
+	AllowedCountries []string      // países permitidos (mismos que el enforcer); vacío = sin selección por país
+	Geo              CountryLookup // nil = la alerta lleva la IP del evento que cruzó el umbral
 }
 
 // connection registra una conexión SASL autenticada.
@@ -57,7 +73,7 @@ func (m *Module) Name() string { return "sasl_connections" }
 
 // Handle procesa un evento. Solo actúa sobre AuthSuccess con cuenta conocida.
 func (m *Module) Handle(ev event.Event) []detection.Alert {
-	if ev.Type != event.AuthSuccess || ev.Account == "" {
+	if ev.Type != event.AuthSuccess || ev.Account == "" || isMailboxProtocol(ev.Process) {
 		return nil
 	}
 
@@ -91,7 +107,7 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 				Action:    detection.ActionSuspendAcct,
 				Timestamp: ev.Timestamp,
 				Server:    ev.Server,
-				IP:        ev.IP,
+				IP:        m.targetIP(ips, ev.IP),
 				Account:   ev.Account,
 				Domain:    ev.Domain,
 				Reasons:   []string{reason},
@@ -116,6 +132,7 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 
 	// Señal 2: exceso de conexiones totales (botnet concentrado).
 	if m.cfg.Max > 0 && len(current) >= m.cfg.Max {
+		target := m.targetIP(uniqueIPs(current), ev.IP)
 		delete(m.windows, ev.Account)
 		score := 65
 		reason := fmt.Sprintf(
@@ -132,7 +149,7 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 			Action:    detection.ActionSuspendAcct,
 			Timestamp: ev.Timestamp,
 			Server:    ev.Server,
-			IP:        ev.IP,
+			IP:        target,
 			Account:   ev.Account,
 			Domain:    ev.Domain,
 			Reasons:   []string{reason},
@@ -140,6 +157,43 @@ func (m *Module) Handle(ev event.Event) []detection.Alert {
 	}
 
 	return nil
+}
+
+// isMailboxProtocol indica si el evento viene de mailbox.log (IMAP/POP3/SOAP/
+// account) en lugar de Postfix.
+func isMailboxProtocol(process string) bool {
+	switch strings.ToLower(process) {
+	case "imap", "pop3", "soap", "account":
+		return true
+	}
+	return false
+}
+
+// targetIP elige la IP de la alerta de suspensión: la primera de un país no
+// permitido (o de país desconocido) entre las de la ventana. Si todas son de
+// países permitidos, o no hay Geo configurado, usa fallback (la IP del evento).
+func (m *Module) targetIP(ips []string, fallback string) string {
+	if m.cfg.Geo == nil || len(m.cfg.AllowedCountries) == 0 {
+		return fallback
+	}
+	for _, ip := range ips {
+		if !m.allowed(m.cfg.Geo.Country(ip)) {
+			return ip
+		}
+	}
+	return fallback
+}
+
+func (m *Module) allowed(country string) bool {
+	if country == "" {
+		return false
+	}
+	for _, a := range m.cfg.AllowedCountries {
+		if strings.EqualFold(strings.TrimSpace(a), country) {
+			return true
+		}
+	}
+	return false
 }
 
 // pruneExpired elimina del map las cuentas cuya ventana quedó vacía.

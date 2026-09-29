@@ -31,7 +31,7 @@ echo "    /var/lib/sendguard/      (base de datos SQLite + GeoIP)"
 echo "    /var/log/sendguard-audit.log"
 echo "    cron de actualización GeoIP (si existe)"
 echo ""
-echo "  Los bans activos en el firewall serán eliminados."
+echo "  Los bans activos del agente se desbloquearán y se eliminará el ipset 'sendguard'."
 echo ""
 read -rp "  ¿Confirmar desinstalación? [s/N]: " CONFIRM
 [[ "${CONFIRM,,}" == "s" ]] || { echo "  Cancelado."; exit 0; }
@@ -57,68 +57,80 @@ elif systemctl is-active --quiet sendguard-policyd 2>/dev/null; then
     exit 1
 fi
 
+# ── Limpiar bans del firewall ─────────────────────────────────────────────────
+# Con el agente todavía corriendo: él sabe exactamente qué IPs bloqueó y con qué
+# backend, así que se le pide desbloquear cada una (firewall + SQLite). No se
+# borran reglas por su forma: un "deny"/"reject" del administrador se vería
+# igual. Lo único que se elimina en bloque es el ipset "sendguard", que es
+# enteramente de SendGuard.
+section "── Bans del firewall"
+
+API_ADDR=127.0.0.1:9099
+CTL=/usr/local/bin/sendguard-ctl
+if [[ -x "$CTL" ]] && curl -fsS -o /dev/null --max-time 5 "http://$API_ADDR/health" 2>/dev/null; then
+    AGENT_IPS=$(curl -fsS --max-time 10 "http://$API_ADDR/status" 2>/dev/null \
+        | grep -oE '"ip":"[^"]+"' | cut -d'"' -f4 || true)
+    n=0
+    for ip in $AGENT_IPS; do
+        if "$CTL" -addr "http://$API_ADDR" unblock "$ip" &>/dev/null; then
+            n=$((n + 1))
+        else
+            warn "No se pudo desbloquear $ip vía el agente"
+        fi
+    done
+    ok "Bans del agente desbloqueados: $n"
+else
+    warn "El agente no responde en $API_ADDR: no se pueden identificar sus bans con certeza"
+fi
+
+if systemctl is-active --quiet firewalld 2>/dev/null; then
+    # Backend firewalld-ipset: quitar el binding de la zona drop y el set.
+    if firewall-cmd --permanent --get-ipsets 2>/dev/null | tr ' ' '\n' | grep -qx sendguard; then
+        firewall-cmd --permanent --zone=drop --remove-source=ipset:sendguard &>/dev/null || true
+        firewall-cmd --permanent --delete-ipset=sendguard &>/dev/null \
+            && ok "ipset 'sendguard' eliminado" \
+            || warn "No se pudo eliminar el ipset 'sendguard' — revísalo con: firewall-cmd --get-ipsets"
+        firewall-cmd --reload &>/dev/null || true
+    fi
+    # Backend firewalld (rich rules): informar las que queden con la forma de
+    # SendGuard, sin borrarlas (pueden ser del administrador).
+    LEFT=$( { firewall-cmd --list-rich-rules; firewall-cmd --permanent --list-rich-rules; } 2>/dev/null \
+        | grep -E '^rule family="?ipv4"? source address="?[^" ]+"? reject$' | sort -u || true)
+    if [[ -n "$LEFT" ]]; then
+        warn "Quedan rich rules 'reject' con la forma que usaba SendGuard (revisar y borrar a mano si corresponde):"
+        echo "$LEFT" | sed 's/^/      /'
+    fi
+elif command -v ufw &>/dev/null; then
+    LEFT=$(ufw status 2>/dev/null | awk '$1=="Anywhere" && $2=="DENY" && ($3=="IN" ? $4 : $3) ~ /^[0-9.\/]+$/' || true)
+    if [[ -n "$LEFT" ]]; then
+        warn "Quedan reglas ufw 'deny from X' (pueden ser de SendGuard o del administrador; revisar a mano):"
+        echo "$LEFT" | sed 's/^/      /'
+    fi
+else
+    warn "No se detectó firewalld ni ufw — limpia los bans manualmente"
+fi
+
 # ── Detener y deshabilitar servicios ──────────────────────────────────────────
 section "── Servicios systemd"
 
-for svc in sendguard-agent; do
-    if systemctl is-active --quiet "$svc" 2>/dev/null; then
-        systemctl stop "$svc"
-        ok "$svc detenido"
-    else
-        info "$svc no estaba corriendo"
-    fi
-    if systemctl is-enabled --quiet "$svc" 2>/dev/null; then
-        systemctl disable "$svc"
-        ok "$svc deshabilitado"
-    fi
-done
-
-# ── Limpiar bans del firewall ─────────────────────────────────────────────────
-section "── Bans del firewall"
-
-# Detectar backend activo
-if systemctl is-active --quiet firewalld 2>/dev/null; then
-    # firewalld: eliminar reglas de la zona sendguard si existe
-    if firewall-cmd --get-zones 2>/dev/null | grep -qw sendguard; then
-        BLOCKED_IPS=$(firewall-cmd --zone=sendguard --list-rich-rules 2>/dev/null \
-            | grep -oP '(?<=source address=")[^"]+' || true)
-        for ip in $BLOCKED_IPS; do
-            firewall-cmd --zone=sendguard --remove-rich-rule="rule family='ipv4' source address='$ip' drop" \
-                --permanent &>/dev/null && info "IP eliminada del firewall: $ip"
-        done
-        firewall-cmd --reload &>/dev/null || true
-        ok "Bans de firewalld eliminados"
-    else
-        # Zona default: buscar reglas rich con "SendGuard" o limpiar la zona drop
-        BLOCKED_IPS=$(firewall-cmd --zone=drop --list-rich-rules 2>/dev/null \
-            | grep -oP '(?<=source address=")[^"]+' || true)
-        for ip in $BLOCKED_IPS; do
-            firewall-cmd --zone=drop --remove-rich-rule="rule family='ipv4' source address='$ip' drop" \
-                --permanent &>/dev/null && info "IP eliminada del firewall: $ip"
-        done
-        [[ -n "$BLOCKED_IPS" ]] && firewall-cmd --reload &>/dev/null || true
-        ok "Bans de firewalld procesados"
-    fi
-elif command -v ufw &>/dev/null; then
-    # ufw: eliminar reglas DENY TO con comentario sendguard (si las hay)
-    ufw status numbered 2>/dev/null | grep -i 'DENY IN' | awk '{print $1}' | tr -d '[]' \
-        | sort -rn | while read -r n; do
-        ufw --force delete "$n" &>/dev/null && info "Regla ufw #$n eliminada"
-    done
-    ok "Bans de ufw procesados (revisar manualmente si persisten reglas)"
+if systemctl is-active --quiet sendguard-agent 2>/dev/null; then
+    systemctl stop sendguard-agent
+    ok "sendguard-agent detenido"
 else
-    warn "No se detectó firewalld ni ufw — limpia los bans manualmente"
+    info "sendguard-agent no estaba corriendo"
+fi
+if systemctl is-enabled --quiet sendguard-agent 2>/dev/null; then
+    systemctl disable sendguard-agent
+    ok "sendguard-agent deshabilitado"
 fi
 
 # ── Eliminar archivos de servicio systemd ─────────────────────────────────────
 section "── Archivos systemd"
 
-for f in /etc/systemd/system/sendguard-agent.service; do
-    if [[ -f "$f" ]]; then
-        rm -f "$f"
-        ok "Eliminado: $f"
-    fi
-done
+if [[ -f /etc/systemd/system/sendguard-agent.service ]]; then
+    rm -f /etc/systemd/system/sendguard-agent.service
+    ok "Eliminado: /etc/systemd/system/sendguard-agent.service"
+fi
 systemctl daemon-reload
 ok "systemd recargado"
 

@@ -77,16 +77,21 @@ case "$OS_FAMILY" in
         ufw status | grep -q "Status: active" || die "ufw no está activo (ufw enable)"
         ok "firewall: ufw activo"
         ;;
-    rhel)
-        FIREWALL_BACKEND="firewalld"
-        systemctl is-active --quiet firewalld || die "firewalld no está activo (systemctl start firewalld)"
-        ok "firewall: firewalld activo"
-        ;;
     *)
-        warn "Distribución no reconocida — asumiendo firewalld"
-        FIREWALL_BACKEND="firewalld"
+        [[ "$OS_FAMILY" == rhel ]] || warn "Distribución no reconocida — asumiendo firewalld"
         systemctl is-active --quiet firewalld || die "firewalld no está activo (systemctl start firewalld)"
-        ok "firewall: firewalld activo"
+        # Mismo default que Ansible: un ipset (hash:net) en vez de una rich rule
+        # por IP, que degrada firewalld con miles de bans. En upgrades se respeta
+        # el backend ya configurado: cambiarlo dejaría huérfanas las entradas
+        # del backend anterior (nadie las expiraría).
+        FIREWALL_BACKEND="firewalld-ipset"
+        if [[ -f "$CONFIG_FILE" ]]; then
+            prev_backend=$(awk '/^firewall:/{f=1;next} f&&/^[^ #]/{f=0} f&&/backend:/{gsub(/"/,"",$2);print $2;exit}' "$CONFIG_FILE")
+            case "$prev_backend" in
+                firewalld|firewalld-ipset) FIREWALL_BACKEND="$prev_backend" ;;
+            esac
+        fi
+        ok "firewall: firewalld activo (backend: $FIREWALL_BACKEND)"
         ;;
 esac
 
@@ -374,9 +379,11 @@ if [[ -n "$MM_ACCOUNT_ID" && -n "$MM_LICENSE_KEY" ]]; then
     MMDB_PATH="$DB_DIR/GeoLite2-Country.mmdb"
     info "Descargando GeoLite2-Country.mmdb..."
     _sg_curl_err=$(mktemp)
+    # "&& … || …": con set -e, un curl fallido en una asignación simple
+    # terminaba el script antes de llegar al fallback a ipinfo.
     HTTP_CODE=$(curl -sSL -o "$MMDB_TAR" -w "%{http_code}" \
-        -u "${MM_ACCOUNT_ID}:${MM_LICENSE_KEY}" "$MMDB_URL" 2>"$_sg_curl_err")
-    _sg_curl_exit=$?
+        -u "${MM_ACCOUNT_ID}:${MM_LICENSE_KEY}" "$MMDB_URL" 2>"$_sg_curl_err") \
+        && _sg_curl_exit=0 || _sg_curl_exit=$?
     _sg_curl_msg=$(cat "$_sg_curl_err"); rm -f "$_sg_curl_err"
 
     if [[ "$HTTP_CODE" == "200" && $_sg_curl_exit -eq 0 ]]; then
@@ -404,7 +411,10 @@ if [[ -n "$MM_ACCOUNT_ID" && -n "$MM_LICENSE_KEY" ]]; then
     # Lee credenciales desde el config para no embeberlas en crontab.
     if [[ -n "$MMDB_PATH" ]]; then
         CRON_CMD="MM_ID=\$(grep 'maxmind_account_id' /etc/sendguard/agent.yaml | sed 's/.*: \"\\(.*\\)\"/\\1/'); MM_KEY=\$(grep 'maxmind_license_key' /etc/sendguard/agent.yaml | sed 's/.*: \"\\(.*\\)\"/\\1/'); curl -fsSL -L -u \"\$MM_ID:\$MM_KEY\" '${MMDB_URL}' -o '${MMDB_TAR}' && tar -xzf '${MMDB_TAR}' --wildcards --strip-components=1 -C '${DB_DIR}' '*.mmdb' && rm -f '${MMDB_TAR}' && systemctl reload-or-restart sendguard-agent"
-        (crontab -l 2>/dev/null | grep -v 'GeoLite2-Country'; echo "0 3 * * 4 $CRON_CMD # SendGuard GeoIP update") | crontab -
+        # "|| true": sin crontab previo, crontab -l y grep -v salen con 1 y, con
+        # set -e + pipefail, la subshell abortaba todo install.sh.
+        { crontab -l 2>/dev/null | grep -v 'GeoLite2-Country' || true
+          echo "0 3 * * 4 $CRON_CMD # SendGuard GeoIP update"; } | crontab -
         ok "Cron de actualización GeoIP instalado (jueves 3am)"
     fi
 fi

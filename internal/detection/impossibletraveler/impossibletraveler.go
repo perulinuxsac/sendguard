@@ -49,8 +49,11 @@ type Config struct {
 }
 
 func (c Config) isAllowed(country string) bool {
+	// Sin distinguir mayúsculas: GeoIP devuelve "PE" y la config puede traer
+	// "pe". Con == el país del usuario legítimo contaba como no permitido y la
+	// suspensión salía con su IP, que el enforcer luego omitía.
 	for _, a := range c.AllowedCountries {
-		if a == country {
+		if strings.EqualFold(strings.TrimSpace(a), country) {
 			return true
 		}
 	}

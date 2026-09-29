@@ -28,12 +28,13 @@ type AlertForwarder interface {
 	SaveAlert(a detection.Alert)
 }
 
-// IPWhitelist es el subconjunto de detection.Whitelist que necesita el Enforcer.
-// Permite añadir y quitar IPs en caliente sin importar el paquete detection completo
-// (aunque en la práctica siempre se pasa un *detection.Whitelist).
+// IPWhitelist es el subconjunto de detection.Whitelist que necesita el Enforcer:
+// silenciar los eventos de una IP mientras dura su ban. Usa Silence/Unsilence
+// (no AddIP/RemoveIP) para no mezclarse con la whitelist del operador: expirar
+// un ban no debe borrar una exoneración que el operador puso para esa IP.
 type IPWhitelist interface {
-	AddIP(ip string) error
-	RemoveIP(ip string)
+	Silence(ip string) error
+	Unsilence(ip string)
 }
 
 // UserNotifier envía avisos dirigidos al usuario final afectado (no al admin).
@@ -121,6 +122,7 @@ type Enforcer struct {
 	suspendedAccts map[string]suspendedAcct
 	blocksTotal    atomic.Int64
 	suspsTotal     atomic.Int64
+	fwReady        atomic.Bool // Setup del backend completado (o no requerido)
 }
 
 // New crea un Enforcer con la configuración dada.
@@ -157,18 +159,27 @@ func (e *Enforcer) Run(ctx context.Context, alertCh <-chan detection.Alert) {
 	}
 }
 
+// reconcileInterval es cada cuánto se verifica que los bans vigentes sigan
+// presentes en el firewall (ver reconcileFirewall).
+const reconcileInterval = 2 * time.Minute
+
 // runUnbanLoop comprueba cada 30 s si hay bans expirados y limpia su estado.
 // Para ufw elimina además la regla del firewall; para firewalld la regla ya
 // expiró por --timeout y solo se purga el estado interno del agente.
+// Cada reconcileInterval, además, re-aplica los bans que el firewall perdió.
 func (e *Enforcer) runUnbanLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	recon := time.NewTicker(reconcileInterval)
+	defer recon.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			e.unbanExpired(ctx)
+		case <-recon.C:
+			e.reconcileFirewall(ctx)
 		}
 	}
 }
@@ -204,7 +215,7 @@ func (e *Enforcer) unbanExpired(ctx context.Context) {
 			e.cfg.Store.DeleteBan(ip)
 		}
 		if e.cfg.Whitelist != nil {
-			e.cfg.Whitelist.RemoveIP(ip)
+			e.cfg.Whitelist.Unsilence(ip)
 		}
 	}
 }
@@ -335,17 +346,21 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		return nil
 	}
 
+	expiry := banExpiry(banSecs)
 	e.mu.Lock()
 	if entry, exists := e.blockedIPs[alert.IP]; exists && time.Now().Before(entry.expiry) {
+		// Ya bloqueada. Si el pedido la deja bloqueada bastante más tiempo
+		// (p. ej. un bloqueo manual permanente sobre un ban temporal), se
+		// extiende; si no, es un duplicado. Sin esto la API respondía
+		// "permanente" y el ban seguía expirando a la hora.
+		if !expiry.After(entry.expiry.Add(time.Minute)) {
+			e.mu.Unlock()
+			slog.Info("enforcement: IP ya bloqueada, omitiendo duplicado", "ip", alert.IP, "expiry", entry.expiry.Format("15:04:05"))
+			return nil
+		}
+		e.blockedIPs[alert.IP] = blockedIP{expiry: expiry, module: alert.Module}
 		e.mu.Unlock()
-		slog.Info("enforcement: IP ya bloqueada, omitiendo duplicado", "ip", alert.IP, "expiry", entry.expiry.Format("15:04:05"))
-		return nil
-	}
-	var expiry time.Time
-	if banSecs > 0 {
-		expiry = time.Now().Add(time.Duration(banSecs) * time.Second)
-	} else {
-		expiry = time.Now().Add(100 * 365 * 24 * time.Hour)
+		return e.extendBan(ctx, alert, banSecs, entry)
 	}
 	e.blockedIPs[alert.IP] = blockedIP{expiry: expiry, module: alert.Module}
 	if _, ipnet, err := net.ParseCIDR(alert.IP); err == nil {
@@ -399,9 +414,70 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 	// Agregar a la whitelist del engine para que deje de despachar eventos de esta IP.
 	// Cuando el ban expire se quitará automáticamente (ver unbanExpired / Unblock).
 	if e.cfg.Whitelist != nil {
-		_ = e.cfg.Whitelist.AddIP(alert.IP)
+		_ = e.cfg.Whitelist.Silence(alert.IP)
 	}
 	return nil
+}
+
+// banExpiry convierte un TTL en segundos (0 = permanente) en la expiración
+// interna del ban. Los permanentes se representan como 100 años.
+func banExpiry(banSecs int) time.Time {
+	if banSecs > 0 {
+		return time.Now().Add(time.Duration(banSecs) * time.Second)
+	}
+	return time.Now().Add(100 * 365 * 24 * time.Hour)
+}
+
+// extendBan alarga un ban vigente (el mapa interno ya tiene la nueva
+// expiración). Persiste la expiración y re-aplica la regla: en firewalld con
+// rich rules la regla temporal lleva su propio --timeout, así que se reemplaza;
+// en ipset/ufw la expiración la gestiona el agente y Block solo añade la
+// entrada permanente si hace falta (idempotente). Si el firewall falla se
+// restaura el ban anterior.
+func (e *Enforcer) extendBan(ctx context.Context, alert detection.Alert, banSecs int, prev blockedIP) error {
+	restore := func() {
+		e.mu.Lock()
+		e.blockedIPs[alert.IP] = prev
+		e.mu.Unlock()
+		if e.cfg.Store != nil {
+			_ = e.cfg.Store.SaveBan(alert.IP, prev.module, prev.expiry)
+		}
+	}
+	if e.cfg.Store != nil {
+		if err := e.cfg.Store.SaveBan(alert.IP, alert.Module, banExpiry(banSecs)); err != nil {
+			slog.Warn("enforcement: no se pudo persistir la extensión del ban", "ip", alert.IP, "error", err)
+		}
+	}
+	fwCtx, cancel := actionCtx(ctx)
+	defer cancel()
+	if !e.needsExplicitUnban() {
+		if err := e.fw.Unblock(fwCtx, alert.IP); err != nil {
+			restore()
+			return fmt.Errorf("firewall: %w", err)
+		}
+	}
+	if err := e.fw.Block(fwCtx, alert.IP, banSecs); err != nil {
+		// En firewalld la regla anterior ya se quitó: re-aplicar lo que quede
+		// del ban previo para no dejar la IP libre.
+		if !e.needsExplicitUnban() {
+			_ = e.fw.Block(fwCtx, alert.IP, remainingSecs(prev.expiry, time.Now()))
+		}
+		restore()
+		return fmt.Errorf("firewall: %w", err)
+	}
+	slog.Info("enforcement: ban extendido", "ip", alert.IP, "ban_seconds", banSecs,
+		"expiry_anterior", prev.expiry.Format(time.RFC3339), "module", alert.Module)
+	return nil
+}
+
+// remainingSecs convierte una expiración en el TTL a pedir al firewall
+// (0 = permanente, para las expiraciones a 50+ años).
+func remainingSecs(expiry, now time.Time) int {
+	remaining := expiry.Sub(now)
+	if remaining >= 50*365*24*time.Hour {
+		return 0
+	}
+	return int(remaining.Seconds()) + 1
 }
 
 // suspendAccount suspende una cuenta Zimbra vía zmprov y bloquea la IP atacante si está presente.
@@ -659,36 +735,63 @@ func (e *Enforcer) needsExplicitUnban() bool {
 //     y NO se consulta el firewall (0 bans = todos expiraron limpiamente).
 //  2. Firewall     — fallback solo si SQLite no está configurado o devuelve error.
 //
-// Para backends con Setup (firewalld-ipset) además inicializa el firewall y
-// repuebla las reglas desde el estado restaurado: tras un reload o reboot las
-// entradas runtime del ipset se pierden, y SQLite es quien sabe qué bans
+// Después concilia el firewall con el estado restaurado (reconcileFirewall):
+// tras un reboot o reload las reglas temporales (rich rules con --timeout,
+// entradas runtime del ipset) se pierden, y SQLite es quien sabe qué bans
 // siguen vigentes.
 func (e *Enforcer) LoadExistingBans(ctx context.Context) {
-	if s, ok := e.fw.(fwSetup); ok {
-		setupCtx, cancel := actionCtx(ctx)
-		err := s.Setup(setupCtx)
-		cancel()
-		if err != nil {
-			slog.Error("enforcement: fallo al inicializar el backend de firewall", "error", err)
-		}
+	if err := e.ensureSetup(ctx); err != nil {
+		slog.Error("enforcement: fallo al inicializar el backend de firewall (se reintentará)", "error", err)
 	}
 
 	if e.cfg.Store != nil {
 		if _, ok := e.loadBansFromStore(); ok {
-			e.resyncFirewall(ctx)
+			e.reconcileFirewall(ctx)
 			return // SQLite accesible — no reimportar reglas del firewall
 		}
 	}
 	e.loadBansFromFirewalld(ctx)
 }
 
-// resyncFirewall re-aplica en el firewall los bans vigentes restaurados de
-// SQLite. Solo para backends con unban explícito (ipset): en firewalld con
-// rich rules las reglas permanentes ya sobreviven solas y re-crear las
-// temporales con --timeout duplicaría su duración. Idempotente: las entradas
-// ya presentes responden ALREADY_ENABLED y se ignoran.
-func (e *Enforcer) resyncFirewall(ctx context.Context) {
-	if !e.needsExplicitUnban() {
+// ensureSetup inicializa el backend si lo requiere (firewalld-ipset crea el
+// set y su binding). Si falló antes —p. ej. el agente arrancó antes que
+// firewalld— se reintenta en cada conciliación hasta que funcione.
+func (e *Enforcer) ensureSetup(ctx context.Context) error {
+	if e.fwReady.Load() {
+		return nil
+	}
+	if s, ok := e.fw.(fwSetup); ok {
+		setupCtx, cancel := actionCtx(ctx)
+		err := s.Setup(setupCtx)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
+	e.fwReady.Store(true)
+	return nil
+}
+
+// fwKey canonicaliza una IP/CIDR para comparar el estado interno con el
+// listado del firewall ("1.2.3.4/32" y "1.2.3.4" son la misma entrada).
+func fwKey(target string) string {
+	t := normalizeTarget(target)
+	return strings.TrimSuffix(t, "/32")
+}
+
+// reconcileFirewall re-aplica los bans vigentes que ya no están en el
+// firewall. Corre al arrancar y cada reconcileInterval: un `firewall-cmd
+// --reload`, un reinicio de firewalld o un arranque del agente antes que el
+// firewall borran las reglas temporales, pero el agente sigue considerando
+// esas IPs bloqueadas —y silenciadas en el engine—, así que el atacante
+// quedaba libre y sin detección hasta que expirara el ban.
+//
+// Solo re-aplica lo que falta (con el TTL restante), así que no alarga los
+// bans temporales. Si el firewall no se puede leer, no hace nada y reintenta
+// en la próxima vuelta.
+func (e *Enforcer) reconcileFirewall(ctx context.Context) {
+	if err := e.ensureSetup(ctx); err != nil {
+		slog.Warn("enforcement: conciliación: backend de firewall no inicializado", "error", err)
 		return
 	}
 
@@ -696,30 +799,51 @@ func (e *Enforcer) resyncFirewall(ctx context.Context) {
 	e.mu.Lock()
 	targets := make(map[string]int, len(e.blockedIPs)) // ip → banSeconds (0 = permanente)
 	for ip, entry := range e.blockedIPs {
-		if !now.Before(entry.expiry) {
-			continue
+		if now.Before(entry.expiry) {
+			targets[ip] = remainingSecs(entry.expiry, now)
 		}
-		banSecs := 0
-		if remaining := entry.expiry.Sub(now); remaining < 50*365*24*time.Hour {
-			banSecs = int(remaining.Seconds()) + 1
-		}
-		targets[ip] = banSecs
 	}
 	e.mu.Unlock()
+	if len(targets) == 0 {
+		return
+	}
 
-	synced := 0
+	listCtx, cancel := actionCtx(ctx)
+	present, err := e.fw.ListBlockedIPs(listCtx)
+	cancel()
+	if err != nil {
+		slog.Warn("enforcement: conciliación: no se pudo leer el firewall (se reintentará)", "error", err)
+		return
+	}
+	have := make(map[string]bool, len(present))
+	for _, p := range present {
+		have[fwKey(p)] = true
+	}
+
+	restored := 0
 	for ip, banSecs := range targets {
+		if have[fwKey(ip)] {
+			continue
+		}
+		// Re-chequear: un Unblock manual pudo quitarla mientras se listaba.
+		e.mu.Lock()
+		entry, still := e.blockedIPs[ip]
+		e.mu.Unlock()
+		if !still || !time.Now().Before(entry.expiry) {
+			continue
+		}
 		blockCtx, cancel := actionCtx(ctx)
 		err := e.fw.Block(blockCtx, ip, banSecs)
 		cancel()
 		if err != nil {
-			slog.Warn("enforcement: resync: no se pudo re-aplicar ban", "ip", ip, "error", err)
+			slog.Warn("enforcement: conciliación: no se pudo re-aplicar ban", "ip", ip, "error", err)
 			continue
 		}
-		synced++
+		restored++
 	}
-	if synced > 0 {
-		slog.Info("enforcement: bans re-aplicados en el firewall", "count", synced)
+	if restored > 0 {
+		slog.Warn("enforcement: bans ausentes en el firewall re-aplicados (reload/reinicio del firewall)",
+			"count", restored, "total_vigentes", len(targets))
 	}
 }
 
@@ -742,7 +866,7 @@ func (e *Enforcer) loadBansFromStore() (int, bool) {
 			}
 			loaded++
 			if e.cfg.Whitelist != nil {
-				_ = e.cfg.Whitelist.AddIP(b.IP)
+				_ = e.cfg.Whitelist.Silence(b.IP)
 			}
 		}
 	}
@@ -783,7 +907,7 @@ func (e *Enforcer) loadBansFromFirewalld(ctx context.Context) {
 			}
 			loaded++
 			if e.cfg.Whitelist != nil {
-				_ = e.cfg.Whitelist.AddIP(ip)
+				_ = e.cfg.Whitelist.Silence(ip)
 			}
 		}
 	}
@@ -896,7 +1020,7 @@ func (e *Enforcer) Unblock(ctx context.Context, ip string) error {
 	}
 
 	if e.cfg.Whitelist != nil {
-		e.cfg.Whitelist.RemoveIP(ip)
+		e.cfg.Whitelist.Unsilence(ip)
 	}
 
 	if err := e.fw.Unblock(ctx, ip); err != nil {

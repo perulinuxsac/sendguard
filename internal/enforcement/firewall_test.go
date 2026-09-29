@@ -289,3 +289,35 @@ func TestBlockManualIPPrivadaRetornaError(t *testing.T) {
 		t.Error("Block manual permanente de IP privada debe retornar error")
 	}
 }
+
+// `ufw status` sin verbose muestra la acción como "DENY" (sin "IN"): antes
+// solo se aceptaba "DENY IN" y el listado de ufw salía siempre vacío.
+func TestParseUFWStatusFormatoSinIN(t *testing.T) {
+	out := []byte(`Status: active
+
+To                         Action      From
+--                         ------      ----
+Anywhere                   DENY        1.2.3.4
+Anywhere                   DENY        200.25.47.0/24
+`)
+	ips := parseUFWStatus(out)
+	if len(ips) != 2 || ips[0] != "1.2.3.4" || ips[1] != "200.25.47.0/24" {
+		t.Errorf("got %v, want [1.2.3.4 200.25.47.0/24]", ips)
+	}
+}
+
+// Reglas deny del administrador con puerto, DENY OUT o IPv6 no son bans de SendGuard.
+func TestParseUFWStatusIgnoraReglasAjenas(t *testing.T) {
+	out := []byte(`Status: active
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     DENY        5.6.7.8
+Anywhere                   DENY OUT    9.9.9.9
+Anywhere (v6)              DENY        2001:db8::1
+Anywhere                   REJECT      8.8.8.8
+`)
+	if ips := parseUFWStatus(out); len(ips) != 0 {
+		t.Errorf("no debe extraer reglas ajenas: got %v", ips)
+	}
+}

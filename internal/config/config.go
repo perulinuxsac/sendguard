@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -295,6 +296,12 @@ func Load(path string) (*Config, error) {
 
 	if cfg.Zimbra.Logs.Main == "" {
 		return nil, errors.New("zimbra.logs.main es obligatorio")
+	}
+
+	// GeoIP devuelve códigos ISO en mayúsculas: normalizar lo que tipeó el
+	// operador ("pe", " PE ") para que todas las comparaciones coincidan.
+	for i, c := range cfg.GeoIP.AllowedCountries {
+		cfg.GeoIP.AllowedCountries[i] = strings.ToUpper(strings.TrimSpace(c))
 	}
 
 	return cfg, nil

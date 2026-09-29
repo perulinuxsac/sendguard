@@ -330,3 +330,57 @@ func TestPruneExpiredDoesNotAffectDetection(t *testing.T) {
 		t.Fatalf("tras la purga, una cuenta fresca debe seguir detectándose: got %d alertas", len(alerts))
 	}
 }
+
+type geoMap map[string]string
+
+func (g geoMap) Country(ip string) string { return g[ip] }
+
+// Los logins de mailbox.log (IMAP/POP3/SOAP) no son conexiones SMTP: un
+// Outlook con varias sesiones IMAP no debe suspender la cuenta.
+func TestIgnoraLoginsDeMailbox(t *testing.T) {
+	m := saslconnections.New(saslconnections.Config{Max: 3, MaxUniqueIPs: 0, ScanTime: 5 * time.Minute})
+	now := time.Now()
+	for i, proto := range []string{"imap", "IMAP", "pop3", "soap", "account"} {
+		ev := authEvent("user@perulinux.pe", "200.1.1.1", now.Add(time.Duration(i)*time.Second))
+		ev.Process = proto
+		if alerts := m.Handle(ev); len(alerts) != 0 {
+			t.Fatalf("%s no debe contar como conexión SMTP: %v", proto, alerts)
+		}
+	}
+	ev := authEvent("user@perulinux.pe", "200.1.1.1", now)
+	ev.Process = "postfix/submission/smtpd"
+	if alerts := m.Handle(ev); len(alerts) != 0 {
+		t.Fatalf("un solo login SMTP no debe alertar: %v", alerts)
+	}
+}
+
+// La suspensión debe llevar una IP de país no permitido aunque el login que
+// cruza el umbral sea el del usuario legítimo (PE): si no, el enforcer la omitía.
+func TestSuspensionLlevaIPExtranjera(t *testing.T) {
+	geo := geoMap{"1.1.1.1": "CN", "2.2.2.2": "RU", "3.3.3.3": "NG", "4.4.4.4": "BR", "161.132.1.1": "PE"}
+	m := saslconnections.New(saslconnections.Config{MaxUniqueIPs: 5, ScanTime: 5 * time.Minute, AllowedCountries: []string{"PE", "US"}, Geo: geo})
+	now := time.Now()
+	var alerts []detection.Alert
+	for i, ip := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4", "161.132.1.1"} {
+		alerts = m.Handle(authEvent("user@perulinux.pe", ip, now.Add(time.Duration(i)*time.Second)))
+	}
+	if len(alerts) == 0 || alerts[0].Action != detection.ActionSuspendAcct {
+		t.Fatalf("se esperaba suspensión: %v", alerts)
+	}
+	if alerts[0].IP != "1.1.1.1" {
+		t.Errorf("la suspensión debe llevar una IP extranjera, no la peruana: got %s", alerts[0].IP)
+	}
+}
+
+// Si todas las IPs son de países permitidos se conserva la IP del evento
+// (el enforcer omite la contención y notifica, como en el resto de módulos).
+func TestSuspensionTodasPermitidasUsaIPDelEvento(t *testing.T) {
+	geo := geoMap{"161.132.1.1": "PE", "161.132.1.2": "PE"}
+	m := saslconnections.New(saslconnections.Config{Max: 2, ScanTime: 5 * time.Minute, AllowedCountries: []string{"PE"}, Geo: geo})
+	now := time.Now()
+	m.Handle(authEvent("user@perulinux.pe", "161.132.1.1", now))
+	alerts := m.Handle(authEvent("user@perulinux.pe", "161.132.1.2", now.Add(time.Second)))
+	if len(alerts) != 1 || alerts[0].IP != "161.132.1.2" {
+		t.Errorf("got %v, want suspensión con la IP del evento 161.132.1.2", alerts)
+	}
+}

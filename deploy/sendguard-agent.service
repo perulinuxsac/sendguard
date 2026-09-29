@@ -1,7 +1,9 @@
 [Unit]
 Description=SendGuard Agent — protección SMTP/IMAP para Zimbra
 Documentation=https://github.com/perulinux/sendguard
-After=network.target zimbra.service
+# firewalld/ufw antes que el agente: al arrancar repone en el firewall los
+# bans vigentes (si arrancara antes, lo reintenta la conciliación periódica).
+After=network.target zimbra.service firewalld.service ufw.service
 Wants=zimbra.service
 
 [Service]

@@ -403,3 +403,34 @@ func TestSeverityFromScore(t *testing.T) {
 		}
 	}
 }
+
+// Silence/Unsilence (bans del enforcer) no deben tocar la whitelist del
+// operador: expirar un ban no puede borrar una exoneración de la misma IP.
+func TestWhitelistUnsilenceNoBorraExoneracionDelOperador(t *testing.T) {
+	wl := NewWhitelist(nil, nil)
+	_ = wl.AddIP("1.2.3.4")   // operador exonera
+	_ = wl.Silence("1.2.3.4") // y la IP además estaba baneada
+	wl.Unsilence("1.2.3.4")   // el ban expira
+	if !wl.ContainsIP("1.2.3.4") {
+		t.Error("la exoneración del operador debe sobrevivir a la expiración del ban")
+	}
+	ips, _ := wl.List()
+	if len(ips) != 1 || ips[0] != "1.2.3.4/32" {
+		t.Errorf("List: got %v, want [1.2.3.4/32]", ips)
+	}
+}
+
+func TestWhitelistSilenceTemporalYNoListado(t *testing.T) {
+	wl := NewWhitelist(nil, nil)
+	_ = wl.Silence("200.25.47.0/24")
+	if !wl.ContainsIP("200.25.47.9") {
+		t.Error("IP dentro de un CIDR silenciado debe filtrarse")
+	}
+	if ips, _ := wl.List(); len(ips) != 0 {
+		t.Errorf("las IPs silenciadas no son whitelist del operador: got %v", ips)
+	}
+	wl.Unsilence("200.25.47.0/24")
+	if wl.ContainsIP("200.25.47.9") {
+		t.Error("tras Unsilence la IP debe volver a despacharse")
+	}
+}

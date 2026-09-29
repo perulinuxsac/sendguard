@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -558,14 +559,15 @@ func TestWhitelistGetConDatos(t *testing.T) {
 	}
 }
 
-func TestWhitelistGetExcluyeIPsBloqueadas(t *testing.T) {
-	// Las IPs bloqueadas entran a la whitelist del engine solo para silenciar
-	// sus eventos durante el ban; el listado del operador no debe mostrarlas.
-	enf := &mockEnforcer{blocked: []enforcement.BlockedIPInfo{
-		{IP: "9.9.9.9", Expiry: time.Now().Add(time.Hour), Module: "auth_failed"},
-	}}
-	srv := newFullTestServer(enf, &mockEngine{}, func(d *api.Dependencies) {
-		d.Whitelist = &mockWhitelist{ips: []string{"9.9.9.9/32", "190.12.0.0/16"}}
+func TestWhitelistGetMuestraSoloLaDelOperador(t *testing.T) {
+	// Con la whitelist real: las IPs silenciadas por bans no aparecen, pero una
+	// exoneración del operador sí, aunque la misma IP esté además baneada.
+	wl := detection.NewWhitelist([]string{"190.12.0.0/16"}, nil)
+	_ = wl.Silence("9.9.9.9") // ban activo
+	_ = wl.AddIP("8.8.8.8")   // exoneración del operador...
+	_ = wl.Silence("8.8.8.8") // ...sobre una IP también baneada
+	srv := newFullTestServer(&mockEnforcer{}, &mockEngine{}, func(d *api.Dependencies) {
+		d.Whitelist = wl
 	})
 	rr := do(t, srv, http.MethodGet, "/whitelist")
 	if rr.Code != http.StatusOK {
@@ -573,9 +575,9 @@ func TestWhitelistGetExcluyeIPsBloqueadas(t *testing.T) {
 	}
 	var body map[string]any
 	json.NewDecoder(rr.Body).Decode(&body)
-	ips := body["ips"].([]any)
-	if len(ips) != 1 || ips[0] != "190.12.0.0/16" {
-		t.Errorf("la IP bloqueada debe excluirse del listado: got %v", ips)
+	got := fmt.Sprint(body["ips"])
+	if got != "[190.12.0.0/16 8.8.8.8/32]" {
+		t.Errorf("listado: got %s, want [190.12.0.0/16 8.8.8.8/32]", got)
 	}
 }
 

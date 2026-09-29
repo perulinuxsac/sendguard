@@ -42,6 +42,11 @@ func (f *firewalldFW) Block(ctx context.Context, ip string, banSeconds int) erro
 	for _, args := range buildFirewallCmds(ip, banSeconds) {
 		cmd := newCmd(ctx, "firewall-cmd", args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
+			// Según la versión, re-añadir una regla existente (conciliación,
+			// par permanente ya presente) sale con error ALREADY_ENABLED.
+			if strings.Contains(string(out), "ALREADY_ENABLED") {
+				continue
+			}
 			return fmt.Errorf("firewall-cmd %v: %w — %s", args, err, bytes.TrimSpace(out))
 		}
 	}
@@ -154,24 +159,30 @@ func (f *ufwFW) ListBlockedIPs(ctx context.Context) ([]string, error) {
 	return parseUFWStatus(out), nil
 }
 
-// parseUFWStatus extrae IPv4 o CIDRs de líneas "DENY IN" de `ufw status`.
-// Separado para facilitar tests sin necesitar el binario ufw.
+// parseUFWStatus extrae las IPv4/CIDRs de las reglas de SendGuard en
+// `ufw status`: las que crea Block ("deny from X to any"), que se listan como
+//
+//	Anywhere                   DENY        1.2.3.4
+//
+// `ufw status` a secas muestra la acción como "DENY"; con `verbose` o si la
+// regla tiene dirección, "DENY IN". Se aceptan ambas (no "DENY OUT"). Solo
+// cuentan las reglas con destino "Anywhere": un "deny 22 from X" del
+// administrador no es un ban de SendGuard. Separado para tests sin ufw.
 func parseUFWStatus(out []byte) []string {
 	var ips []string
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.Contains(line, "DENY IN") {
+		fields := strings.Fields(scanner.Text())
+		// Anywhere DENY [IN] <origen>
+		if len(fields) < 3 || fields[0] != "Anywhere" || fields[1] != "DENY" {
 			continue
 		}
-		// Formato: "Anywhere   DENY IN   1.2.3.4" (o "... 200.25.47.0/24")
-		// El origen es el primer campo que pase ValidBlockTarget (siempre al final).
-		fields := strings.Fields(line)
-		for _, f := range fields {
-			if ValidBlockTarget(f) {
-				ips = append(ips, f)
-				break
-			}
+		src := fields[2]
+		if src == "IN" && len(fields) >= 4 {
+			src = fields[3]
+		}
+		if ValidBlockTarget(src) {
+			ips = append(ips, src)
 		}
 	}
 	return ips

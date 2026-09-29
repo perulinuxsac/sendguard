@@ -110,9 +110,11 @@ func main() {
 	})
 
 	saslConns := saslconnections.New(saslconnections.Config{
-		Max:          cfg.Rules.SaslConnections.Max,
-		MaxUniqueIPs: cfg.Rules.SaslConnections.MaxUniqueIPs,
-		ScanTime:     time.Duration(cfg.Rules.SaslConnections.ScanTime) * time.Second,
+		Max:              cfg.Rules.SaslConnections.Max,
+		MaxUniqueIPs:     cfg.Rules.SaslConnections.MaxUniqueIPs,
+		ScanTime:         time.Duration(cfg.Rules.SaslConnections.ScanTime) * time.Second,
+		AllowedCountries: cfg.GeoIP.AllowedCountries,
+		Geo:              geoResolver,
 	})
 
 	distBrute := distbrute.New(distbrute.Config{
