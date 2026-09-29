@@ -9,7 +9,7 @@ Las versiones v1.0.6 – v1.0.10 surgieron de la respuesta a un incidente de
 compromiso masivo de cuentas en `webmail.perucloud.pe` (12 jun 2026), en el
 que cuentas hackeadas enviaban spam falseando el `From` del sobre.
 
-## [1.3.0] - Sin publicar
+## [1.3.0] - 2026-09-29
 
 Las alertas dicen lo que el agente hizo de verdad, no lo que pidió el módulo.
 
@@ -341,6 +341,7 @@ Correcciones surgidas de una auditoría de código interna. (Se publicó junto c
   enviando sin ser detectada. El remitente del sobre se conserva en
   `Extra["from"]`.
 
+[1.3.0]: https://github.com/perulinuxsac/sendguard/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/perulinuxsac/sendguard/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/perulinuxsac/sendguard/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/perulinuxsac/sendguard/compare/v1.0.12...v1.1.0
