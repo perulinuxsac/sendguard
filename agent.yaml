@@ -20,7 +20,6 @@ zimbra:
   logs:
     main:    "/var/log/mail.log"              # maillog de Postfix — SMTP/SASL (obligatorio)
     mailbox: "/opt/zimbra/log/mailbox.log"   # log de Zimbra — IMAP/POP3/SOAP (opcional, dejar vacío para deshabilitar)
-  workers: 4
   zmprov_bin:   "/opt/zimbra/bin/zmprov"      # ruta completa a zmprov (systemd no incluye /opt/zimbra/bin en $PATH)
   postfix_sbin: "/opt/zimbra/common/sbin"    # binarios de Postfix de Zimbra (solo lectura de la cola: sendguard-ctl queue)
   postfix_conf: "/opt/zimbra/common/conf"    # configuración de Postfix de Zimbra (solo lectura)
@@ -121,11 +120,17 @@ geoip:
   api_url: "https://ipinfo.io"   # fallback HTTP: 50k req/mes gratis
   # token: ""                    # opcional: token ipinfo.io para límite mayor
   cache_ttl: 24             # horas de cache (solo aplica al modo HTTP API)
-  allowed_countries:        # países normales para esta cuenta (vacío = todos)
+  # Países donde normalmente están los usuarios. A las IPs de estos países NO se
+  # les aplica contención automática (ni bloqueo ni suspensión), pero la alerta se
+  # registra y se NOTIFICA marcada para revisión manual. Los bloqueos manuales
+  # (sendguard-ctl block) no se vetan por país. Sin distinguir mayúsculas.
+  # Vacío = ningún país se exime.
+  allowed_countries:
     - "PE"
     - "US"
 
-# Base de datos local SQLite (persistencia de bans y StoreAndForward para Fase 3)
+# Base de datos local SQLite: bans (se restauran al arrancar), whitelist agregada
+# con sendguard-ctl y StoreAndForward hacia el Controller.
 # El Agent crea el directorio automáticamente si no existe.
 local_db:
   path: "/var/lib/sendguard/sendguard.db"
@@ -137,6 +142,9 @@ local_db:
 #                            aunque haya miles de IPs bloqueadas)
 #          "firewalld"       rich rules clásicas (una por IP; degrada con miles)
 #          "ufw"             para Ubuntu/Debian
+# Las redes privadas (RFC 1918), loopback y link-local nunca se bloquean.
+# Si el firewall pierde bans vigentes (firewall-cmd --reload, reinicio de
+# firewalld), el agente los re-aplica en menos de 2 minutos.
 firewall:
   backend: "firewalld-ipset"
   ban_seconds: 3600         # bloquear IP por 1 hora (0 = permanente)
@@ -197,7 +205,15 @@ notification:
 daily_report:
   hour: 8                   # hora UTC de envío (0-23)
 
-# Whitelist — cuentas e IPs exentas de detección
+# Proxies cloud (Microsoft, Google, Apple): a sus eventos se les limpia la IP,
+# así que los módulos por IP nunca bloquean un proxy compartido. Sin definir se
+# usan los rangos por defecto del binario.
+# proxy_cidrs:
+#   - "52.96.0.0/12"
+
+# Whitelist — cuentas e IPs exentas de detección. Las redes privadas están
+# siempre exentas (embebidas). Lo agregado con `sendguard-ctl whitelist add`
+# persiste en SQLite y se suma a esta lista.
 whitelist:
   accounts:
     - "newsletter@cliente-abc.com"

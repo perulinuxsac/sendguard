@@ -8,14 +8,17 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 
 - **Real-time log analysis** — tail-follows `mail.log` and `mailbox.log` without polling delays
 - **11 detection modules** — each tuned with configurable thresholds and time windows
-- **Multi-OS firewall support** — `firewalld` + ipset (RHEL/CentOS/Rocky/AlmaLinux) and `ufw` (Ubuntu/Debian)
-- **Account suspension** — locks compromised Zimbra accounts via `zmprov`
-- **GeoIP intelligence** — restricts logins to allowed countries via [ipinfo.io](https://ipinfo.io)
+- **Multi-OS firewall support** — `firewalld` with a single ipset (RHEL/CentOS/Rocky/AlmaLinux; rich rules also supported) and `ufw` (Ubuntu/Debian)
+- **Self-healing firewall state** — every 2 minutes (and at startup) the agent re-applies any active ban the firewall lost (e.g. after `firewall-cmd --reload` or a reboot)
+- **Account suspension** — locks compromised Zimbra accounts via `zmprov`, and optionally emails the affected user a notice
+- **GeoIP intelligence** — local MaxMind GeoLite2 database (recommended) or [ipinfo.io](https://ipinfo.io) HTTP API fallback
+- **Allowed countries** — containment is skipped for IPs from the countries you list; those alerts are still notified for manual review (see [Allowed countries](#allowed-countries))
+- **Safe by default** — private networks (RFC 1918), loopback and link-local are never blocked
 - **AbuseIPDB enrichment** — annotates blocks with reputation scores
-- **Telegram, webhook and email notifications** — instant alerts on block/suspend actions
+- **Telegram, webhook and email notifications** — alerts on block/suspend actions, filterable per action, plus a daily email summary
 - **Notification throttling** — per-IP/account cooldown and global rate cap to prevent alert floods
 - **REST API** — observe state and issue manual commands without touching the server
-- **SQLite persistence** — bans survive agent restarts
+- **SQLite persistence** — bans and runtime whitelist changes survive agent restarts and redeploys
 - **StoreAndForward** — queues alerts locally when the central Controller is unreachable
 - **Audit log** — append-only NDJSON record of every enforcement action
 
@@ -29,9 +32,9 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 |---|:-:|---|---|
 | `auth_failed` | 60 | SASL failures in `mail.log` | Block IP |
 | `number_messages` | 80 | External `status=sent` deliveries in `mail.log` | Suspend account |
-| `sasl_connections` | 65 / 90 | SASL successes in `mail.log` | Suspend account / Block IP + Suspend account |
+| `sasl_connections` | 65 / 90 | SMTP SASL successes in `mail.log` | Suspend account / Block IP + Suspend account |
 | `dist_brute_force` | 55 | SASL failures in `mail.log` | Notify only |
-| `impossible_traveler` | 85 | Auth successes + GeoIP | Suspend account |
+| `impossible_traveler` | 85 | Auth successes + GeoIP | Suspend account + Block attacker IP |
 | `queue_monitor` | 70 | Deferred messages in `mail.log` | Notify admin |
 | `domain_discovery` | 75 | SASL failures in `mail.log` | Block IP |
 | `bounce_rate` | 85 | Bounce events in `mail.log` | Suspend account |
@@ -65,11 +68,13 @@ Counts deliveries to **external domains only**: `status=sent` events via `postfi
 
 #### `sasl_connections` — Botnet reusing a compromised account (two variants)
 
-Accumulates every authenticated SASL connection for each account, recording IP and timestamp.
+Accumulates every authenticated **SMTP** SASL connection (Postfix `smtpd`/submission) for each account, recording IP and timestamp. IMAP/POP3/SOAP logins from `mailbox.log` are ignored: a mail client with several IMAP sessions or a phone polling POP3 is not sending abuse.
 
 **Variant A — Distributed botnet (score 90):** N distinct IPs authenticated as the same account → the credentials were distributed across a botnet. Double action: **suspend account + block every unique IP** seen in the window.
 
-**Variant B — Concentrated botnet (score 65):** too many total SASL connections from the same account (even from few IPs) → intensive single-node or small-group attack. Action: **suspend account only**.
+**Variant B — Concentrated botnet (score 65):** too many total SASL connections from the same account (even from few IPs) → intensive single-node or small-group attack. Action: **suspend account** (the IP attached to the suspension is also blocked, see below).
+
+The suspension carries the first IP in the window from a country **not** in `allowed_countries`, not simply the login that crossed the threshold — otherwise a legitimate user's login from an allowed country could make the enforcer skip the suspension.
 
 - **Defaults:** 5 unique IPs or 20 total connections / 5 minutes
 
@@ -88,11 +93,12 @@ The inverse of `password_spray`. Multiple distinct IPs each fail once or twice a
 
 Stores the last known login for each account (country, IP, timestamp). When a new successful login arrives, it compares the new country against the previous one. If they differ and the elapsed time is shorter than `window_minutes`, a physical journey between them is impossible → the account is compromised.
 
-Known mail-client proxies (Outlook Mobile, Gmail, iCloud, etc.) are fully skipped — neither recorded nor compared. If both countries are in `allowed_countries`, no alert is raised. If GeoIP cannot resolve the IP, the event is silently ignored (avoids false positives).
+Known mail-client proxies (Outlook Mobile, Gmail, iCloud, etc.) are fully skipped — neither recorded nor compared (`proxy_cidrs`, `trusted_cidrs`, and `trusted_orgs` in HTTP API mode). If both countries are in `allowed_countries`, no alert is raised. If GeoIP cannot resolve the IP, the event is silently ignored (avoids false positives).
 
-- **Score:** 85 &nbsp;|&nbsp; **Action:** Suspend account
+The attacker is often the *first* login and the legitimate user the second, so the module targets the IP from the country **not** in `allowed_countries`: the account is suspended and that IP blocked; if both IPs are from non-allowed countries, both are blocked. The IP from an allowed country is treated as the legitimate user and left alone. Country codes are compared case-insensitively. Without `allowed_countries` it suspends the account with the current login's IP.
+
+- **Score:** 85 &nbsp;|&nbsp; **Action:** Suspend account + Block attacker IP(s)
 - **Defaults:** 30-minute window
-- Does **not** block the IP — it may be legitimate in its own country.
 - Requires GeoIP (local MMDB or HTTP API fallback).
 
 ---
@@ -167,11 +173,23 @@ The most sophisticated module. It watches for the worst-case outcome of a brute-
 | 70 | Server reputation problem | Notify admin | `queue_monitor` |
 | 75 | Multi-org scan | Block IP | `domain_discovery` |
 | 80 | Mass spam / account taken | Suspend account | `number_messages`, `account_takeover` (B) |
-| 85 | High-confidence compromise | Suspend account **or** Block IP¹ | `impossible_traveler`, `bounce_rate`, `password_spray` |
+| 85 | High-confidence compromise | See note¹ | `impossible_traveler`, `bounce_rate`, `password_spray` |
 | 90 | Near-certain compromise | Block IP + Suspend account | `sasl_connections` (distributed), `rcpt_flood` |
 | 95 | Certainty: password found | Block IP + Suspend account | `account_takeover` (A) |
 
-> ¹ At score 85: `impossible_traveler` and `bounce_rate` suspend the account without blocking the IP; `password_spray` blocks the IP without suspending any account.
+> ¹ At score 85: `impossible_traveler` suspends the account and blocks the attacker IP(s); `bounce_rate` suspends the account without blocking any IP (bounces carry no client IP); `password_spray` blocks the IP without suspending any account.
+>
+> In general, whenever a suspension alert carries an IP, the enforcer blocks that IP too (unless it is private or from an allowed country).
+
+---
+
+## Allowed countries
+
+`geoip.allowed_countries` lists the countries where your users normally are (e.g. `PE`, `US`). For an IP from one of those countries, **automatic** containment is skipped — no firewall block, no suspension — but the alert is still recorded and **notified**, marked for manual review. This avoids locking out legitimate users, while an attacker operating from a local IP or VPN does not go unnoticed.
+
+- Manual blocks (`sendguard-ctl block`, API) are never vetoed by country.
+- Codes are case-insensitive (`pe` = `PE`).
+- Empty list = every country is "normal"; nothing is skipped for country reasons.
 
 ---
 
@@ -183,12 +201,14 @@ mail.log ──┐
 mailbox.log ┘                                    (modules)              │
                                                                         ├── firewall (block IP)
                                                                         ├── zmprov  (suspend account)
-                                                                        ├── notifier (Telegram / webhook)
+                                                                        ├── notifier (Telegram / webhook / email)
                                                                         ├── audit log (NDJSON)
                                                                         └── forwarder ──► Controller
 ```
 
 The pipeline is fully asynchronous. Each watcher goroutine writes events to a buffered channel (capacity 10 000); the engine distributes them to all enabled modules. Modules emit `Alert` structs into a second channel (capacity 1 000) consumed by the enforcer.
+
+While an IP is banned, the engine stops dispatching its events. This silencing is kept separate from the operator whitelist, so a ban expiring never removes a whitelist entry. Bans are persisted in SQLite; on startup, and every 2 minutes, the enforcer reconciles them with the firewall and re-applies any that went missing, with their remaining TTL.
 
 ---
 
@@ -206,15 +226,15 @@ The agent exposes an HTTP API on `127.0.0.1:9099` (configurable). Protected endp
 | `GET` | `/urban/{ip}` | IP intelligence: GeoIP + AbuseIPDB |
 | `GET` | `/queue` | Current Postfix mail queue (read-only) |
 | `GET` | `/domains` | Domains with accumulated alerts |
-| `GET` | `/whitelist` | Current whitelist contents |
+| `GET` | `/whitelist` | Operator whitelist (`ips`, `accounts`) plus the built-in private ranges (`builtin_ips`) |
 | `GET` | `/blocked/{ip}` | O(1) check whether an IP is currently blocked |
 
 ### Protected endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/blocked/{ip}` | Manually block an IP |
-| `DELETE` | `/blocked/{ip}` | Manually unblock an IP |
+| `POST` | `/blocked/{ip}` | Manually block an IP or CIDR (a longer block, e.g. permanent, extends an existing ban) |
+| `DELETE` | `/blocked/{ip}` | Manually unblock an IP or CIDR |
 | `DELETE` | `/suspended/{account}` | Unsuspend a Zimbra account |
 | `POST` | `/whitelist/{value}` | Add IP/CIDR or account to whitelist |
 | `DELETE` | `/whitelist/{value}` | Remove IP/CIDR or account from whitelist |
@@ -238,11 +258,11 @@ Commands:
   queue                       current Postfix mail queue
   domains                     domains with accumulated alerts
   whitelist list              show current whitelist
-  whitelist add    <val>      add IP/CIDR or account (in-memory)
-  whitelist remove <val>      remove IP/CIDR or account (in-memory)
+  whitelist add    <val>      add IP/CIDR or account (persistent)
+  whitelist remove <val>      remove IP/CIDR or account (persistent)
 ```
 
-> **Note:** `whitelist add/remove` changes are in-memory only. Edit `agent.yaml` to make them persistent across restarts.
+> **Note:** `whitelist add/remove` changes take effect immediately and are stored in the local SQLite database, so they survive agent restarts and redeploys that regenerate `agent.yaml`. They are kept in addition to the entries in `agent.yaml`.
 
 ---
 
@@ -271,6 +291,8 @@ cd /tmp/sendguard
 bash install.sh
 ```
 
+For a fleet, use the Ansible role in [`deploy/ansible/`](deploy/ansible/README.md) or the native `.deb`/`.rpm` packages ([INSTALL.md](INSTALL.md#package-install-deb--rpm)).
+
 The installer auto-detects the OS, firewall backend, Zimbra paths, and mail log location. It will prompt for:
 - Server ID and client name
 - Allowed countries (GeoIP)
@@ -289,10 +311,11 @@ See [INSTALL.md](INSTALL.md) for full installation details and configuration ref
 
 ```bash
 # Clone and build
-git clone https://github.com/perulinux/sendguard
+git clone https://github.com/perulinuxsac/sendguard
 cd sendguard
 make build build-ctl     # produces dist/sendguard-agent, dist/sendguard-ctl
-make package             # creates dist/sendguard-<version>.tar.gz with service + install.sh
+make package             # creates dist/sendguard-<version>.tar.gz with service, install/uninstall scripts
+make packages            # native .deb and .rpm (requires nfpm; see INSTALL.md)
 make test                # run test suite
 make lint                # run golangci-lint
 ```
@@ -301,4 +324,4 @@ make lint                # run golangci-lint
 
 ## License
 
-See [LICENSE](LICENSE).
+Proprietary — © PeruLinux. All rights reserved.

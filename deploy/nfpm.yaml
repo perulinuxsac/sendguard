@@ -21,7 +21,7 @@ description: |
   impossible traveler, colas, rebotes). Contención solo por firewall
   (ipset/ufw) y suspensión de cuenta; no modifica la configuración SMTP.
 vendor: "PeruLinux"
-homepage: "https://github.com/perulinux/sendguard"
+homepage: "https://github.com/perulinuxsac/sendguard"
 license: "Proprietary"
 
 # El paquete instala el software; la configuración por cliente (agent.yaml)

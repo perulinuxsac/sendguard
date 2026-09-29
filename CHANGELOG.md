@@ -198,7 +198,8 @@ completa de los 15 paquetes, los 3 binarios y el deploy).
 
 ## [1.0.11] - 2026-07-09
 
-Correcciones surgidas de una auditoría de código interna.
+Correcciones surgidas de una auditoría de código interna. (Se publicó junto con
+1.0.12 y no tiene tag propio.)
 
 ### Corregido
 - **Las alertas con IP de país permitido ahora SÍ se notifican.** Antes,
@@ -303,6 +304,10 @@ Correcciones surgidas de una auditoría de código interna.
   enviando sin ser detectada. El remitente del sobre se conserva en
   `Extra["from"]`.
 
+[1.2.0]: https://github.com/perulinuxsac/sendguard/compare/v1.1.1...v1.2.0
+[1.1.1]: https://github.com/perulinuxsac/sendguard/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/perulinuxsac/sendguard/compare/v1.0.12...v1.1.0
+[1.0.12]: https://github.com/perulinuxsac/sendguard/compare/v1.0.10...v1.0.12
 [1.0.10]: https://github.com/perulinuxsac/sendguard/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/perulinuxsac/sendguard/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/perulinuxsac/sendguard/compare/v1.0.7...v1.0.8

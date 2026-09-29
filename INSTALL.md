@@ -48,7 +48,7 @@ ufw enable
 Run this on your **build host** (not necessarily the Zimbra server):
 
 ```bash
-git clone https://github.com/perulinux/sendguard
+git clone https://github.com/perulinuxsac/sendguard
 cd sendguard
 
 # Produces dist/sendguard-agent, dist/sendguard-ctl, and dist/sendguard-<version>.tar.gz
@@ -82,18 +82,18 @@ On the **build host** (requires Go 1.22+ and [`nfpm`](https://nfpm.goreleaser.co
 go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
 export PATH="$PATH:$(go env GOPATH)/bin"
 
-# Build from a clean tag so the version has no -dirty/-gNNN suffix
-git tag v1.0.5        # if not already tagged
+# Build from a clean release tag so the version has no -dirty/-gNNN suffix
+git checkout v1.2.0
 make packages         # → both .deb and .rpm
 # or individually: make deb / make rpm
-# or override the version: make packages VERSION=1.0.5
+# or override the version: make packages VERSION=1.2.0
 ```
 
 Output in `dist/`:
 
 ```
-sendguard_1.0.5_amd64.deb
-sendguard-1.0.5-1.x86_64.rpm
+sendguard_1.2.0_amd64.deb
+sendguard-1.2.0-1.x86_64.rpm
 ```
 
 ### What the package contains
@@ -126,10 +126,10 @@ The maintainer scripts run `systemctl daemon-reload`, enable the service, and:
 
 ```bash
 # Debian / Ubuntu
-apt install ./sendguard_1.0.5_amd64.deb
+apt install ./sendguard_1.2.0_amd64.deb
 
 # RHEL / Rocky / AlmaLinux
-dnf install ./sendguard-1.0.5-1.x86_64.rpm
+dnf install ./sendguard-1.2.0-1.x86_64.rpm
 
 # Then configure and start:
 cp /etc/sendguard/agent.yaml.example /etc/sendguard/agent.yaml   # or deploy via Ansible
@@ -139,7 +139,7 @@ systemctl enable --now sendguard-agent
 
 Upgrading later is just `apt install ./sendguard_<newver>_amd64.deb` /
 `dnf upgrade ./sendguard-<newver>.x86_64.rpm`; the existing config and database
-are kept and the services restart automatically.
+are kept and the agent restarts automatically.
 
 ---
 
@@ -156,13 +156,17 @@ bash install.sh
 
 The installer will:
 
-1. Detect the OS family and select the appropriate firewall backend
+1. Detect the OS family and select the firewall backend: `ufw` on Debian/Ubuntu,
+   `firewalld-ipset` on RHEL (on upgrades the backend already configured is kept)
 2. Locate Zimbra binaries and configuration directories
 3. Find the active mail log (`/var/log/mail.log` or `/var/log/maillog`)
-4. Prompt for configuration values interactively
-5. Write `/etc/sendguard/agent.yaml`
-6. Install and start the `sendguard-agent` systemd service
-7. Verify that the agent is running and the API responds
+4. Remove the Postfix hooks left by versions < 1.1.0, if any (`remove_smtp_hooks.sh`),
+   before touching any binary — if that fails, nothing is installed
+5. Install the binaries and prompt for configuration values interactively
+6. Download the MaxMind GeoLite2 database and install a weekly update cron (if credentials were given)
+7. Write `/etc/sendguard/agent.yaml` and generate a random API key (`/etc/sendguard/api.key`)
+8. Install and start the `sendguard-agent` systemd service
+9. Verify that the agent is running and the API responds
 
 ### Interactive prompts
 
@@ -224,7 +228,9 @@ systemctl enable --now sendguard-agent
 
 ## Configuration Reference
 
-Full annotated `agent.yaml`:
+Full annotated `agent.yaml`. Every key is optional unless marked otherwise; the
+values shown are the defaults. The repository's [`agent.yaml`](agent.yaml) is a
+ready-to-edit example.
 
 ```yaml
 # Unique identifier for this server (appears in alerts and audit log)
@@ -233,128 +239,174 @@ server_id: "my-server-mail1"
 # Human-readable client/organization name
 client_name: "My Organization"
 
-# ── Zimbra paths ────────────────────────────────────────────────────────────
+# ── Zimbra ──────────────────────────────────────────────────────────────────
 zimbra:
   logs:
-    main: "/var/log/mail.log"          # RHEL: /var/log/maillog
-    mailbox: "/opt/zimbra/log/mailbox.log"  # optional; omit or leave blank to disable
-  postfix_sbin: "/opt/zimbra/common/sbin"  # or /opt/zimbra/postfix/sbin
-  postfix_conf: "/opt/zimbra/common/conf"  # or /opt/zimbra/postfix/conf
+    main: "/var/log/mail.log"               # REQUIRED. RHEL: /var/log/maillog
+    mailbox: "/opt/zimbra/log/mailbox.log"  # IMAP/POP3/SOAP logins; "" disables it
+  zmprov_bin: "/opt/zimbra/bin/zmprov"      # full path (systemd's PATH lacks /opt/zimbra/bin)
+  # Read-only: used only to list the queue (GET /queue, sendguard-ctl queue).
+  # SendGuard never modifies the SMTP configuration nor the queue.
+  postfix_sbin: "/opt/zimbra/common/sbin"   # or /opt/zimbra/postfix/sbin
+  postfix_conf: "/opt/zimbra/common/conf"   # or /opt/zimbra/postfix/conf
 
-# ── Detection rules ─────────────────────────────────────────────────────────
+# ── Detection rules (scan_time in seconds) ──────────────────────────────────
 rules:
   auth_failed:
-    max_auth_failures: 5    # block IP after N SASL failures
-    scan_time: 300          # sliding window in seconds
+    max_auth_failures: 5      # SASL failures from one IP → block the IP
+    scan_time: 300
 
   number_messages:
-    max_messages: 300       # suspend account after N messages sent
-    scan_time: 3600
+    max_messages: 100         # deliveries to EXTERNAL domains per account → suspend
+    scan_time: 3600           # (local/internal deliveries do not count)
 
-  sasl_connections:
-    max_sasl_connections: 20  # block IP after N concurrent SASL connections
-    max_unique_ips: 5         # suspend account when N distinct IPs auth as the same user
+  sasl_connections:           # SMTP logins only (IMAP/POP3 are ignored)
+    max_sasl_connections: 20  # total logins of one account → suspend
+    max_unique_ips: 5         # distinct IPs logging in as one account → suspend + block them all
     scan_time: 300
 
   dist_brute_force:
-    max_ips: 5              # notify when N distinct IPs fail against the same account
+    max_ips: 5                # distinct IPs failing against one account → notify only
     scan_time: 300
 
   impossible_traveler:
-    window_minutes: 30      # minimum travel time between two login locations
-    # trusted_orgs: skip GeoIP check for IPs belonging to these organizations (ipinfo.io)
-    trusted_orgs:
-      - "MICROSOFT"
-      - "GOOGLE"
-      - "APPLE"
-      - "AMAZON"
-    # trusted_cidrs: skip GeoIP check for these IP ranges (fallback for local GeoIP DB)
+    window_minutes: 30        # two countries within this window → suspend + block attacker IP
+    # Mail-client proxies to ignore (Outlook Mobile / Exchange Online, ...):
     trusted_cidrs:
-      - "52.96.0.0/14"
-      - "52.100.0.0/14"
       - "104.47.0.0/17"
+    # By organization name — only with the HTTP API (ipinfo.io); with the local
+    # MaxMind DB there is no org data, so it is ignored (a warning is logged).
+    # trusted_orgs: ["MICROSOFT", "GOOGLE", "APPLE"]
 
   queue_monitor:
-    queue_threshold: 2500   # purge queue when domain has N deferred messages
-    scan_time: 3600
+    queue_threshold: 2500     # deferrals to one destination domain → notify only
+    scan_time: 3600           # (never purges the queue)
 
   domain_discovery:
-    max_domains: 10         # block IP connecting to N distinct destination domains
+    max_domains: 10           # distinct target domains of failed logins from one IP → block
     scan_time: 600
 
   bounce_rate:
-    max_bounces: 50         # suspend account after N bounces
+    max_bounces: 50           # bounces caused by one account → suspend
     scan_time: 300
 
   rcpt_flood:
-    max_recipients: 50      # block IP + suspend account after N unique recipients
+    max_recipients: 50        # recipients from one authenticated IP → block IP + suspend
     scan_time: 300
+
+  password_spray:
+    max_accounts: 10          # distinct accounts failed from one IP → block
+    scan_time: 300
+
+  account_takeover:
+    min_failures: 5           # failures before an account is watched
+    correl_window: 600        # failures followed by success/sending → suspend (+ block)
+
+# ── Cloud proxies ────────────────────────────────────────────────────────────
+# The IP of events from these ranges is cleared before dispatch: IP-based
+# modules (auth_failed, rcpt_flood, password_spray, domain_discovery,
+# impossible_traveler) ignore them, so a shared proxy is never blocked.
+# Account-based counters (sasl_connections total, account_takeover) still count.
+# Defaults: Microsoft 365/Exchange, Google Mail, Apple iCloud.
+# proxy_cidrs: ["52.96.0.0/12", "104.47.0.0/17", "17.0.0.0/8", ...]
 
 # ── GeoIP ────────────────────────────────────────────────────────────────────
 geoip:
-  api_url: "https://ipinfo.io"    # 50k requests/month free; add token for higher limits
-  cache_ttl: 24             # hours to cache GeoIP responses
+  # Recommended: local MaxMind GeoLite2 database (no network, no rate limits).
+  # install.sh / Ansible download it and keep it updated when credentials are given.
+  db_path: "/var/lib/sendguard/GeoLite2-Country.mmdb"
+  maxmind_account_id: ""
+  maxmind_license_key: ""
+  # Fallback when db_path is empty:
+  api_url: "https://ipinfo.io"  # 50k requests/month free
+  token: ""                     # optional ipinfo.io token
+  cache_ttl: 24                 # hours (HTTP API mode only)
+  # Countries where your users normally are. IPs from these countries are
+  # never contained automatically (no block/suspend) but are still notified.
+  # Case-insensitive. Empty = no country-based skipping.
   allowed_countries:
     - "PE"
     - "US"
 
 # ── AbuseIPDB (optional) ─────────────────────────────────────────────────────
 abuseipdb:
-  api_key: ""               # leave blank to disable
-  cache_ttl: 24             # hours
+  api_key: ""                 # leave blank to disable
+  cache_ttl: 24               # hours
 
 # ── Firewall ─────────────────────────────────────────────────────────────────
 firewall:
-  backend: "firewalld"      # "firewalld" (RHEL) or "ufw" (Ubuntu/Debian)
-  ban_seconds: 3600         # 0 = permanent ban
+  # "firewalld-ipset" (recommended on RHEL: one hash:net set bound to the drop zone)
+  # "firewalld"       (one rich rule per IP; degrades with thousands of bans)
+  # "ufw"             (Ubuntu/Debian)
+  # Default when omitted: "firewalld". install.sh and Ansible write
+  # "firewalld-ipset" on RHEL and "ufw" on Debian/Ubuntu.
+  backend: "firewalld-ipset"
+  ban_seconds: 3600           # 0 = permanent ban
+  # Private networks (RFC 1918), loopback and link-local are never blocked.
 
 # ── Local SQLite database ────────────────────────────────────────────────────
+# Persists bans (restored and reconciled with the firewall on startup), runtime
+# whitelist changes and alerts pending for the Controller. "" disables it.
 local_db:
   path: "/var/lib/sendguard/sendguard.db"
-  max_size_mb: 100
+  max_size_mb: 100            # informational
 
 # ── Controller (optional) ────────────────────────────────────────────────────
 # Leave url blank for standalone mode; alerts are stored locally only.
 controller:
   url: ""
   api_key: ""
-  sync_interval: 30         # seconds between sync attempts
-  batch_size: 100           # alerts per HTTP POST
+  sync_interval: 30           # seconds between sync attempts
+  batch_size: 100             # alerts per HTTP POST
 
-# ── Audit log (optional) ─────────────────────────────────────────────────────
+# ── Audit log ────────────────────────────────────────────────────────────────
 audit_log:
-  path: "/var/log/sendguard-audit.log"  # NDJSON; leave blank to disable
+  path: "/var/log/sendguard-audit.log"  # NDJSON; "" disables it
 
 # ── HTTP API ─────────────────────────────────────────────────────────────────
 api:
-  listen: "127.0.0.1:9099"  # leave blank to disable the API
-  # Required for write endpoints (block/unblock/unsuspend/whitelist) via
+  listen: "127.0.0.1:9099"    # leave blank to disable the API
+  # Required for write endpoints (block/unblock/unsuspend/whitelist) via the
   # X-Api-Key header. install.sh and the Ansible role generate a random key
-  # automatically (stored in /etc/sendguard/api.key); leaving it empty means
-  # ANY local process can call the write endpoints — not recommended.
+  # automatically (also stored in /etc/sendguard/api.key for sendguard-ctl);
+  # empty means ANY local process can call the write endpoints.
   api_key: ""
 
 # ── Notifications ─────────────────────────────────────────────────────────────
+# Each channel is enabled only when its required fields are set.
 notification:
   telegram:
-    token: ""               # bot token; leave blank to disable
-    chat_id: ""             # chat/group/channel ID
+    token: ""                 # bot token
+    chat_id: ""               # chat/group/channel ID
   webhook:
-    url: ""                 # HTTP endpoint (Slack, Teams, n8n, etc.); blank to disable
-    timeout: 10             # seconds
-  email:
-    from: ""                # sender address; leave blank to disable
-    to:
-      - ""                  # one or more recipient addresses
-    sendmail_bin: "/opt/zimbra/common/sbin/sendmail"  # uses Zimbra's sendmail, no SMTP config needed
+    url: ""                   # HTTP endpoint (Slack, Teams, n8n, ...)
+    timeout: 10               # seconds
+  email:                      # sent with Zimbra's local sendmail (no SMTP config)
+    from: ""                  # required to enable the channel
+    to: []                    # alert recipients
+    sendmail_bin: "/opt/zimbra/common/sbin/sendmail"
+    # Email the affected user when their account is suspended (needs only `from`).
+    notify_suspended_user: false
+    user_notice_from: ""      # sender/support contact of that notice ("" = from)
+  cooldown_seconds: 300       # min. time between notifications for the same IP/account
+  max_per_minute: 10          # global cap
+  # Push only these actions (audit log, SQLite and Controller always get all).
+  # Values: block_ip | suspend_account | notify_only. Empty = everything.
+  on_actions: []
+
+# ── Daily report ─────────────────────────────────────────────────────────────
+daily_report:
+  hour: 8                     # UTC hour; sent via notification.email
 
 # ── Whitelist ─────────────────────────────────────────────────────────────────
-# Entries here are never blocked or suspended regardless of detection results.
+# Exempt from detection. Private networks are always exempt (built in).
+# Entries added at runtime with `sendguard-ctl whitelist add` are persisted in
+# SQLite and kept in addition to these.
 whitelist:
   ips:
-    - "192.168.10.0/24"     # office network
+    - "190.5.1.0/24"          # office network
   accounts:
-    - "admin@example.com"
+    - "newsletter@example.com"
 ```
 
 ---
@@ -384,36 +436,43 @@ sendguard-ctl urban 1.2.3.4
 
 ### Expected initial output of `sendguard-ctl status`
 
+The agent's CLI output and logs are in Spanish:
+
 ```
-SendGuard  version: v0.1.0  uptime: 5s
+SendGuard  versión: v1.2.0  uptime: 5s
 
-Counters:
-  events processed : 0
-  alerts emitted   : 0
-  IPs blocked      : 0
-  accounts suspended: 0
+Contadores:
+  eventos procesados : 0
+  alertas emitidas   : 0
+  IPs bloqueadas     : 0
+  cuentas suspendidas: 0
 
-No IPs currently blocked.
+No hay IPs bloqueadas actualmente.
 ```
 
 ---
 
 ## Upgrading
 
-```bash
-# Stop the service
-systemctl stop sendguard-agent
+Preferred: re-run the same method used to install — the Ansible playbook, the
+new `.deb`/`.rpm`, or `install.sh` from the new tarball (it offers the existing
+values as defaults). All three first remove the Postfix hooks of versions
+< 1.1.0 (`remove_smtp_hooks.sh`) and only then replace the binaries.
 
-# Replace the binaries
+Replacing the binaries by hand is only safe from **1.1.0 onwards**:
+
+```bash
 install -m 755 dist/sendguard-agent /usr/local/bin/sendguard-agent
 install -m 755 dist/sendguard-ctl   /usr/local/bin/sendguard-ctl
-
-# Restart
-systemctl start sendguard-agent
+systemctl restart sendguard-agent
 systemctl status sendguard-agent
 ```
 
-Configuration and the SQLite database at `/var/lib/sendguard/sendguard.db` are preserved across upgrades. Active bans are restored from the database on startup.
+> Upgrading from < 1.1.0 by hand: run `sh deploy/remove_smtp_hooks.sh` first.
+> Stopping `sendguard-policyd` while Postfix still points at it makes Postfix
+> answer 451 to all incoming mail.
+
+Configuration and the SQLite database at `/var/lib/sendguard/sendguard.db` are preserved across upgrades. Active bans are restored from the database on startup and re-applied in the firewall if missing.
 
 ---
 
@@ -423,25 +482,32 @@ If installed from a **package**, use the package manager (config and database in
 `/etc/sendguard` and `/var/lib/sendguard` are preserved):
 
 ```bash
-apt remove sendguard      # Debian/Ubuntu  — or `apt purge` to also drop config
+apt remove sendguard      # Debian/Ubuntu (agent.yaml is not a package file: purge keeps it too)
 dnf remove sendguard      # RHEL/Rocky/AlmaLinux
 
 # To remove the preserved config and database as well:
 rm -rf /etc/sendguard /var/lib/sendguard
 ```
 
-If installed from the **tarball/`install.sh`** (manual):
+If installed from the **tarball/`install.sh`**, use the bundled script:
 
 ```bash
-systemctl stop sendguard-agent
-systemctl disable sendguard-agent
-rm -f /etc/systemd/system/sendguard-agent.service
-systemctl daemon-reload
-
-rm -f /usr/local/bin/sendguard-agent /usr/local/bin/sendguard-ctl
-rm -rf /etc/sendguard /var/lib/sendguard
-# Optionally: rm -f /var/log/sendguard-audit.log
+bash uninstall.sh
 ```
+
+It asks for confirmation and, in order:
+
+1. Removes the Postfix hooks of versions < 1.1.0, if any.
+2. While the agent is still running, asks it to unblock every IP it banned.
+3. Deletes the `sendguard` ipset.
+4. Stops the service and removes the binaries, config, database, audit log and GeoIP cron.
+
+Remaining `deny`/`reject` rules that cannot be attributed to SendGuard with certainty are only listed, never deleted — they may belong to the administrator.
+
+> Package removal (`apt/dnf remove`) does not unblock IPs. Run
+> `sendguard-ctl status` and `sendguard-ctl unblock <ip>` first, or remove the
+> ipset afterwards (`firewall-cmd --permanent --zone=drop --remove-source=ipset:sendguard`,
+> `firewall-cmd --permanent --delete-ipset=sendguard`, `firewall-cmd --reload`).
 
 ---
 
@@ -465,23 +531,31 @@ Common causes:
 ### Agent starts but no blocks are happening
 
 1. Confirm the correct mail log is configured (`zimbra.logs.main`). Check it is actively receiving new lines: `tail -f /var/log/mail.log`
-2. Check that the firewall backend matches the OS: `firewall.backend: "ufw"` on Ubuntu, `"firewalld"` on RHEL.
-3. Lower the detection thresholds temporarily and watch `journalctl -u sendguard-agent -f` for `enforcement: IP bloqueada` or `enforcement: cuenta suspendida` messages.
-4. Verify the whitelist is not covering the test IP: `sendguard-ctl whitelist list`
+2. Check that the firewall backend matches the OS: `firewall.backend: "ufw"` on Ubuntu, `"firewalld-ipset"` (or `"firewalld"`) on RHEL.
+3. Check whether the source IP is from a country in `geoip.allowed_countries`: automatic containment is skipped for those (the alert is notified with "contención omitida").
+4. Lower the detection thresholds temporarily and watch `journalctl -u sendguard-agent -f` for `enforcement: IP bloqueada` or `enforcement: cuenta suspendida` messages.
+5. Verify the whitelist is not covering the test IP: `sendguard-ctl whitelist list` (private networks are always exempt)
 
 ### firewalld: rules are not being added
 
 ```bash
 systemctl is-active firewalld
 firewall-cmd --state
-# Verify the agent can call firewall-cmd
+# Backend firewalld-ipset: entries of the set and its binding to the drop zone
+firewall-cmd --ipset=sendguard --get-entries
+firewall-cmd --zone=drop --list-sources        # must include ipset:sendguard
+# Backend firewalld (rich rules)
 firewall-cmd --list-rich-rules
 ```
+
+After a `firewall-cmd --reload` or a firewalld restart, temporary bans vanish
+from the firewall; the agent re-applies them within 2 minutes (look for
+`bans ausentes en el firewall re-aplicados` in the journal).
 
 ### ufw: rules are not being added
 
 ```bash
-ufw status
+ufw status          # SendGuard bans appear as "Anywhere  DENY  <ip>"
 # Verify the agent can call ufw
 ufw --dry-run deny from 1.2.3.4 to any
 # Confirm ufw is active
@@ -514,7 +588,7 @@ curl -H "X-Api-Key: your-api-key" -X POST http://127.0.0.1:9099/blocked/1.2.3.4
 
 ### Bans not surviving restarts
 
-Ensure `local_db.path` points to a writable location. On first start, SendGuard creates the SQLite file automatically. Check:
+Ensure `local_db.path` points to a writable location (with `local_db.path` empty, bans are rebuilt from the firewall rules instead). On first start, SendGuard creates the SQLite file automatically. Check:
 ```bash
 ls -lh /var/lib/sendguard/sendguard.db
 ```

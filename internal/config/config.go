@@ -21,8 +21,11 @@ type Config struct {
 	Firewall   FirewallConf   `yaml:"firewall"`
 	Whitelist  Whitelist      `yaml:"whitelist"`
 	// ProxyCIDRs: rangos de proxies cloud legítimos (Microsoft, Google, Apple…).
-	// Los eventos de estas IPs no activan módulos IP-céntricos (auth_failed, rcpt_flood)
-	// pero sí los de cuenta (sasl_connections, impossible_traveler).
+	// A los eventos de estas IPs se les limpia la IP antes de despacharlos: los
+	// módulos que dependen de la IP (auth_failed, rcpt_flood, password_spray,
+	// domain_discovery, impossible_traveler) los ignoran; los contadores por
+	// cuenta (sasl_connections total, account_takeover) siguen. Ver
+	// Engine.SetProxyCIDRs.
 	ProxyCIDRs   []string        `yaml:"proxy_cidrs"`
 	Notification NotifyConf      `yaml:"notification"`
 	API          APIConf         `yaml:"api"`

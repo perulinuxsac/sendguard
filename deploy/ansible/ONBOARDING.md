@@ -23,8 +23,8 @@ laptop o el propio repo en `/root/sendguard`):
 - Firewall activo: `firewalld` (Rocky/RHEL/Alma) o `ufw` (Ubuntu/Debian).
 - Log de correo en `/var/log/maillog` o `/var/log/mail.log`.
 
-> Todo lo demás (rutas de Postfix, backend de firewall, `mailbox.log`, `zmprov`)
-> lo autodetecta el rol.
+> Todo lo demás (rutas de Postfix, backend de firewall —`firewalld-ipset` en
+> RHEL, `ufw` en Ubuntu—, `mailbox.log`, `zmprov`) lo autodetecta el rol.
 
 ---
 
@@ -37,7 +37,7 @@ cd /root/sendguard
 make package        # → dist/sendguard-agent, sendguard-ctl
 ```
 
-El rol aborta el despliegue si falta cualquiera de los tres en `dist/`.
+El rol aborta el despliegue si falta cualquiera de los dos en `dist/`.
 
 ---
 
@@ -155,8 +155,8 @@ sendguard_controller_url: "https://controller.perulinux.pe"
 sendguard_controller_api_key: "<token-del-cliente>"
 ```
 
-y re-ejecuta el playbook (paso 8): solo reescribe `agent.yaml` y reinicia los
-servicios. El agente sincroniza automáticamente las alertas acumuladas.
+y re-ejecuta el playbook (paso 8): solo reescribe `agent.yaml` y reinicia el
+agente. El agente sincroniza automáticamente las alertas acumuladas.
 
 ---
 
@@ -168,7 +168,7 @@ ansible-playbook site.yml --ask-vault-pass --check --diff \
 ```
 
 Revisa el `--diff`: deberías ver la creación de directorios, copia de binarios,
-generación de `agent.yaml` y las units de systemd. Si el preflight detecta que
+generación de `agent.yaml` y la unit de systemd. Si el preflight detecta que
 falta Zimbra / firewall / maillog, falla aquí sin tocar el host.
 
 ---
@@ -186,15 +186,16 @@ Lo que hace el rol, en orden:
 
 1. Preflight + autodetección (OS, firewall, rutas Zimbra, mail log).
 2. Verifica que los binarios existen en `dist/`.
-3. Crea `/etc/sendguard` y `/var/lib/sendguard`.
+3. Crea `/etc/sendguard`, `/var/lib/sendguard` y `/usr/local/lib/sendguard`.
 4. Retira hooks SMTP de versiones < 1.1.0 (quita `check_policy_service` /
    `sendguard_access` de Postfix y después elimina `sendguard-policyd`).
    En un host nuevo no hace nada.
 5. Copia los binarios a `/usr/local/bin`.
 6. Descarga la DB GeoIP MaxMind (si hay credenciales) + cron de actualización
    semanal.
-7. Genera `/etc/sendguard/agent.yaml` desde el template.
-8. Instala y habilita la unit `sendguard-agent`.
+7. Genera la API key local (una vez por host; se reutiliza en cada redeploy)
+   y `/etc/sendguard/agent.yaml` desde el template.
+8. Instala, habilita y arranca la unit `sendguard-agent`.
 9. Smoke-check final (ver paso 9).
 
 ---
@@ -204,9 +205,8 @@ Lo que hace el rol, en orden:
 ### Automática (corre al final del deploy, no intrusiva)
 
 El rol confirma que `sendguard-agent` está `active`, que Postfix no referencia
-a SendGuard,
-reporta la versión instalada y sondea `GET /health` de la API. Si algo falla, el
-playbook falla.
+a SendGuard (`remove_smtp_hooks.sh --check`), reporta la versión instalada y
+sondea `GET /health` de la API. Si algo falla, el playbook falla.
 
 Comprobación manual rápida en cualquier momento:
 
@@ -243,11 +243,11 @@ Está excluido de los deploys normales (tag `never`); solo corre con `--tags sel
 ## 10. Operación posterior
 
 - **Actualizar a una versión nueva**: `make package` en el repo y re-ejecuta el
-  playbook. Al cambiar el binario o la config, los handlers reinician los
-  servicios automáticamente.
+  playbook. Al cambiar el binario o la config, los handlers reinician el
+  agente automáticamente.
 - **Cambiar un umbral / whitelist / enrolar al Controller**: edita
   `group_vars` o `host_vars` y re-ejecuta. Solo se reescribe `agent.yaml` (con
-  backup) y se reinician los servicios.
+  backup) y se reinicia el agente.
 - **No edites `/etc/sendguard/agent.yaml` a mano en el host**: está gestionado
   por Ansible y se sobrescribe en el próximo despliegue. Cambia las variables.
 
@@ -279,12 +279,12 @@ $EDITOR inventory.ini                              # añadir el host
 ssh-keyscan -H <IP> >> ~/.ssh/known_hosts          # aceptar host key
 $EDITOR host_vars/mail1.cliente-nuevo.pe.yml       # client_name + whitelist
 
-# 6. Prueba en seco
+# 7. Prueba en seco
 ansible-playbook site.yml --ask-vault-pass --check --diff --limit mail1.cliente-nuevo.pe
 
-# 7. Desplegar
+# 8. Desplegar
 ansible-playbook site.yml --ask-vault-pass --limit mail1.cliente-nuevo.pe
 
-# 8. Verificar
+# 9. Verificar
 ansible mail1.cliente-nuevo.pe -a 'systemctl is-active sendguard-agent' --become
 ```

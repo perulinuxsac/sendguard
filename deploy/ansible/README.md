@@ -5,16 +5,21 @@ servidores **Zimbra** (Rocky/RHEL con firewalld o Ubuntu/Debian con ufw).
 
 Hace lo mismo que `deploy/install.sh` pero desatendido y repetible: copia los
 binarios, descarga la DB GeoIP MaxMind (+ cron de actualización), genera
-`/etc/sendguard/agent.yaml`, instala el servicio systemd `sendguard-agent` y lo
-habilita y arranca.
+`/etc/sendguard/agent.yaml` y la API key local (`/etc/sendguard/api.key`),
+instala el servicio systemd `sendguard-agent` y lo habilita y arranca.
+
+Backend de firewall por defecto: `firewalld-ipset` en Rocky/RHEL y `ufw` en
+Ubuntu/Debian (se puede forzar con `sendguard_firewall_backend` en host_vars).
 
 SendGuard **no interviene el SMTP**: no toca la configuración de Postfix, la cola
 ni el antispam. La contención es solo firewall (ipset/ufw) y suspensión de
 cuenta (zmprov). En hosts con versiones < 1.1.0 el rol ejecuta
 `deploy/remove_smtp_hooks.sh`, que quita de Postfix el
-`check_policy_service inet:127.0.0.1:9100` y el `sendguard_access`, recarga
-Postfix, verifica y **recién entonces** detiene y elimina `sendguard-policyd`.
-Si no puede quitar el hook, falla sin detener policyd, para no cortar el correo.
+`check_policy_service inet:…:9100` y el `sendguard_access` (plantillas de
+zmconfigd, LDAP y `main.cf`), recarga Postfix, verifica y **recién entonces**
+detiene y elimina `sendguard-policyd`. Todo eso ocurre antes de copiar los
+binarios nuevos. Si no puede quitar el hook (sin `postconf`, hook en un override
+de `master.cf`…), el play falla sin detener policyd, para no cortar el correo.
 
 ## Requisitos
 
@@ -90,13 +95,14 @@ deploy/ansible/
 El rol incluye **dos niveles**:
 
 - **Smoke-check (automático, seguro)** — corre al final de cada despliegue. No
-  modifica nada: confirma que `sendguard-agent` está activo y que
-  Postfix no referencia a SendGuard (`postconf -n`), reporta la versión instalada y sondea el endpoint `GET /health` de la
-  API. Si algo falla, el playbook falla.
+  modifica nada: confirma que `sendguard-agent` está activo, que Postfix no
+  referencia a SendGuard ni queda `sendguard-policyd`
+  (`remove_smtp_hooks.sh --check`), reporta la versión instalada y sondea el
+  endpoint `GET /health` de la API. Si algo falla, el playbook falla.
 
 - **Self-test integral (opt-in, intrusivo)** — ejecuta `deploy/test_sendguard.sh`
   en el host: baja umbrales, reinicia el agente, inyecta ataques sintéticos para
-  validar los 9 módulos de detección y restaura los umbrales al terminar.
+  validar 9 de los 11 módulos de detección y restaura los umbrales al terminar.
 
   ```bash
   ansible-playbook site.yml --ask-vault-pass --tags selftest --limit staging-mail1
@@ -115,7 +121,7 @@ El rol incluye **dos niveles**:
   ejecutar el playbook. Al cambiar el binario o la config, los handlers reinician
   `sendguard-agent` automáticamente.
 - **Cambiar un umbral o whitelist**: edita group_vars/host_vars y re-ejecuta; solo
-  se reescribe `agent.yaml` (con backup) y se reinician los servicios.
+  se reescribe `agent.yaml` (con backup) y se reinicia el agente.
 - **Verificar un host**:
 
   ```bash
