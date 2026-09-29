@@ -9,7 +9,7 @@ Las versiones v1.0.6 – v1.0.10 surgieron de la respuesta a un incidente de
 compromiso masivo de cuentas en `webmail.perucloud.pe` (12 jun 2026), en el
 que cuentas hackeadas enviaban spam falseando el `From` del sobre.
 
-## [1.1.1] - Sin publicar
+## [1.1.1] - 2026-09-28
 
 Correcciones de la migración de v1.1.0 (`remove_smtp_hooks.sh` y la
 actualización por paquete). Todas evitaban el mismo desenlace: retirar
