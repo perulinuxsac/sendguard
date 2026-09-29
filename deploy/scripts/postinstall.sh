@@ -5,18 +5,9 @@
 # que genera Ansible o install.sh.
 set -e
 
-# Upgrade desde <1.1.0: quitar check_policy_service/sendguard_access de Postfix
-# y recién después retirar sendguard-policyd. Si falla, policyd se deja
-# corriendo (detenerlo con el hook puesto cortaría el correo entrante).
-if [ -x /usr/local/lib/sendguard/remove_smtp_hooks.sh ]; then
-    if ! /usr/local/lib/sendguard/remove_smtp_hooks.sh; then
-        cat >&2 <<'MSG'
-!! SendGuard: no se pudo retirar el hook de Postfix (check_policy_service).
-!! sendguard-policyd sigue corriendo para no cortar el correo. Revisa
-!! 'postconf -n' y ejecuta: /usr/local/lib/sendguard/remove_smtp_hooks.sh
-MSG
-    fi
-fi
+# Los hooks SMTP de versiones <1.1.0 los retira el preinstall
+# (remove_smtp_hooks.sh), antes de reemplazar archivos: si llegamos aquí,
+# Postfix ya no referencia a SendGuard.
 
 systemctl daemon-reload || true
 

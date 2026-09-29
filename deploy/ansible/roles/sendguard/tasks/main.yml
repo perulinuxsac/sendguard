@@ -52,6 +52,8 @@
 
 - name: Retirar hooks SMTP de SendGuard en Postfix y sendguard-policyd
   ansible.builtin.command: /usr/local/lib/sendguard/remove_smtp_hooks.sh
+  environment:
+    SENDGUARD_CONFIG_DIR: "{{ sendguard_config_dir }}"
   register: sg_smtp_hooks
   changed_when: "'CHANGED' in sg_smtp_hooks.stdout"
 

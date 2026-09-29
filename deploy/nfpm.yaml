@@ -35,7 +35,8 @@ contents:
   - src: dist/sendguard-ctl
     dst: /usr/local/bin/sendguard-ctl
     file_info: { mode: 0755 }
-  # Retira hooks SMTP de versiones <1.1.0 (lo ejecuta postinstall).
+  # Retira hooks SMTP de versiones <1.1.0. Es también el preinstall del
+  # paquete; se instala aparte para poder ejecutarlo a mano.
   - src: deploy/remove_smtp_hooks.sh
     dst: /usr/local/lib/sendguard/remove_smtp_hooks.sh
     file_info: { mode: 0755 }
@@ -61,6 +62,14 @@ contents:
     file_info: { mode: 0640 }
 
 scripts:
+  # preinstall corre ANTES de que dpkg/rpm reemplacen los archivos: con el
+  # sendguard-policyd viejo todavía instalado. Si no logra quitar el hook de
+  # Postfix sale con error y el gestor de paquetes aborta la actualización,
+  # dejando intacta la versión anterior (policyd incluido). Hacerlo en
+  # postinstall no sirve: para entonces el binario y la unit de policyd ya se
+  # borraron, y un reinicio dejaría a Postfix apuntando a un policyd que no
+  # existe (451 a todo el correo).
+  preinstall: deploy/remove_smtp_hooks.sh
   postinstall: deploy/scripts/postinstall.sh
   preremove: deploy/scripts/preremove.sh
   postremove: deploy/scripts/postremove.sh

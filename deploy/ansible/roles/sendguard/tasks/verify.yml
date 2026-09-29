@@ -8,13 +8,16 @@
   changed_when: false
   failed_when: sg_active.stdout != "active"
 
+# Mismo script que hace el retiro, en modo solo lectura: un único lugar con
+# los patrones. Falla si queda algún hook o policyd, y también si no puede
+# leer la configuración de Postfix (no se da por limpio lo que no se verificó).
 - name: Confirmar que Postfix no referencia a SendGuard
-  ansible.builtin.shell: >-
-    {{ sendguard_zimbra_sbin }}/postconf -c {{ sendguard_zimbra_conf }} -n
-    | grep -E 'check_policy_service[[:space:]]+inet:(127\.0\.0\.1|localhost):9100|sendguard_access'
+  ansible.builtin.command: /usr/local/lib/sendguard/remove_smtp_hooks.sh --check
+  environment:
+    SENDGUARD_CONFIG_DIR: "{{ sendguard_config_dir }}"
   register: sg_postfix_hooks
   changed_when: false
-  failed_when: sg_postfix_hooks.rc == 0
+  failed_when: sg_postfix_hooks.rc != 0 or 'CHANGED' in sg_postfix_hooks.stdout
 
 - name: Consultar versión del agente instalado
   ansible.builtin.command: "{{ sendguard_bin_dir }}/sendguard-agent -version"

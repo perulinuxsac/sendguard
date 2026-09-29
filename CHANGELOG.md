@@ -9,6 +9,48 @@ Las versiones v1.0.6 – v1.0.10 surgieron de la respuesta a un incidente de
 compromiso masivo de cuentas en `webmail.perucloud.pe` (12 jun 2026), en el
 que cuentas hackeadas enviaban spam falseando el `From` del sobre.
 
+## [1.1.1] - Sin publicar
+
+Correcciones de la migración de v1.1.0 (`remove_smtp_hooks.sh` y la
+actualización por paquete). Todas evitaban el mismo desenlace: retirar
+`sendguard-policyd` con Postfix todavía apuntando a él, lo que hace que
+Postfix responda 451 a todo el correo entrante.
+
+### Corregido
+- **Zimbra ≤ 8.6** (`/opt/zimbra/postfix/sbin`): el script solo buscaba
+  `postconf` en `/opt/zimbra/common/sbin`; al no encontrarlo daba Postfix por
+  limpio y retiraba policyd. Ahora prueba ambas rutas y, si hay Zimbra pero no
+  encuentra `postconf`, falla sin tocar nada.
+- **Paquetes .deb/.rpm**: el retiro de hooks corría en el postinstall, cuando
+  el gestor de paquetes ya había borrado el binario y la unit de policyd, así
+  que "policyd se deja corriendo" era falso. Ahora el script es el
+  **preinstall**: si falla, la actualización se aborta y queda la versión
+  anterior completa. Con eso tampoco quedan rate-limits de `sendguard_access`
+  vigentes sin un agente que los expire.
+- **`install.sh`** instalaba los binarios nuevos antes del retiro de hooks; ahora
+  el retiro va primero y, si falla, no se instala nada.
+- **Hooks en cualquier atributo LDAP**: solo se revisaban
+  `zimbraMtaRestriction` y `zimbraMtaSmtpdSenderRestrictions`, pero zmconfigd
+  arma `smtpd_client/data_restrictions` desde
+  `zimbraMtaSmtpd{Client,Data}Restrictions` y el hook reaparecía en `main.cf`.
+  Ahora se revisan todos los atributos (`zmprov gacf` + `gs`), en dos llamadas
+  en vez de cuatro.
+- **Patrón del hook**: aceptaba solo `127.0.0.1`/`localhost` y no cortaba en el
+  puerto (un puerto 1003 rompía el `inet:localhost:10031` del cbpolicyd).
+  Ahora acepta cualquier host (incl. IPv6), exige separador tras el puerto,
+  toma el puerto de `agent.yaml` y del policyd en ejecución (`ss`), y respeta
+  `SENDGUARD_CONFIG_DIR`.
+- **Overrides en `master.cf`** (`-o smtpd_*_restrictions=…`, con comas): antes
+  no se detectaban y el access file se borraba igual (451 en ese servicio).
+  Ahora se detectan y el script falla pidiendo retiro manual.
+- **`postconf` ilegible** se tomaba como "sin hooks"; ahora es un error, también
+  en `--check`.
+- **Postfix detenido**: el `postfix reload` fallido abortaba todo aunque el
+  cambio ya estuviera hecho; ahora solo se recarga si Postfix está corriendo.
+- **Verificación de Ansible**: tenía el patrón duplicado y fijo en el puerto
+  9100, y un `postconf` fallido pasaba como limpio. Ahora usa
+  `remove_smtp_hooks.sh --check`.
+
 ## [1.1.0] - 2026-09-28
 
 SendGuard deja de intervenir el SMTP del servidor de correo. La contención es

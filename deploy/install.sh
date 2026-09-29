@@ -125,6 +125,20 @@ ok "Log principal: $MAIL_LOG"
 MAILBOX_LOG=""
 [[ -f /opt/zimbra/log/mailbox.log ]] && MAILBOX_LOG="/opt/zimbra/log/mailbox.log"
 
+# ── Retiro de la integración SMTP heredada ────────────────────────────────────
+# SendGuard ya no interviene el SMTP (solo firewall + suspensión de cuenta).
+# En upgrades desde <1.1.0 quita check_policy_service/sendguard_access de
+# Postfix y recién después retira sendguard-policyd. Va ANTES de instalar los
+# binarios nuevos: si falla, el host queda exactamente como estaba (agente y
+# policyd viejos, sin rate-limits huérfanos). También antes de reescribir
+# agent.yaml, porque lee de ahí el puerto del policyd.
+section "── Retiro de integración SMTP heredada"
+install -D -m 755 "$SCRIPT_DIR/remove_smtp_hooks.sh" /usr/local/lib/sendguard/remove_smtp_hooks.sh
+if ! /usr/local/lib/sendguard/remove_smtp_hooks.sh; then
+    die "No se pudo retirar el hook de SendGuard en Postfix; no se instaló nada (policyd y el agente anterior siguen intactos). Revisa el error de arriba y reintenta."
+fi
+ok "Postfix sin hooks de SendGuard"
+
 # ── Binarios ──────────────────────────────────────────────────────────────────
 section "── Instalación de binarios"
 
@@ -144,17 +158,6 @@ for bin in sendguard-agent sendguard-ctl; do
     fi
 done
 
-# ── Retiro de la integración SMTP heredada ────────────────────────────────────
-# SendGuard ya no interviene el SMTP (solo firewall + suspensión de cuenta).
-# En upgrades desde <1.1.0 quita check_policy_service/sendguard_access de
-# Postfix y recién después retira sendguard-policyd. Va antes de reescribir
-# agent.yaml porque lee de ahí el puerto del policyd.
-section "── Retiro de integración SMTP heredada"
-install -D -m 755 "$SCRIPT_DIR/remove_smtp_hooks.sh" /usr/local/lib/sendguard/remove_smtp_hooks.sh
-if ! /usr/local/lib/sendguard/remove_smtp_hooks.sh; then
-    die "No se pudo retirar el hook de SendGuard en Postfix (policyd se dejó corriendo). Revisa 'postconf -n' y reintenta."
-fi
-ok "Postfix sin hooks de SendGuard"
 
 # ── Leer config existente (para usarla como defaults en upgrade) ───────────────
 # Extrae el valor escalar de una clave YAML simple: "key: value"
