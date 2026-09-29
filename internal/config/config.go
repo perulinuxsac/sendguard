@@ -173,6 +173,10 @@ type NotifyConf struct {
 	// OnActions filtra las notificaciones push (Telegram/email/webhook) por acción.
 	// Si está vacío se notifica todo. Valores activos: block_ip | suspend_account | notify_only
 	OnActions []string `yaml:"on_actions"`
+	// OnlyApplied: avisar solo cuando la contención se ejecutó de verdad. No se
+	// notifican las omitidas por país permitido ni las ya aplicadas (cuenta ya
+	// suspendida, IP ya bloqueada); los fallos se notifican siempre.
+	OnlyApplied bool `yaml:"only_applied"`
 }
 
 // EmailConf configura el notificador de email via sendmail local de Zimbra.

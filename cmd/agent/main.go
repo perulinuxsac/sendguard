@@ -306,19 +306,20 @@ func main() {
 
 	// Enforcer: ejecuta las acciones de contención
 	enforcer := enforcement.New(enforcement.Config{
-		FirewallBackend:  cfg.Firewall.Backend,
-		BanSeconds:       cfg.Firewall.BanSeconds,
-		ZmprovBin:        cfg.Zimbra.ZmprovBin,
-		Notifier:         finalNotifier,
-		AbuseIPDB:        abuseClient,
-		AuditLog:         auditLog,
-		Store:            localStore,
-		Forwarder:        fwd,
-		Whitelist:        wl, // IPs bloqueadas se añaden al whitelist del engine automáticamente
-		GeoResolver:      geoResolver,
-		AllowedCountries: cfg.GeoIP.AllowedCountries,
-		NotifyOnActions:  cfg.Notification.OnActions,
-		UserNotifier:     userNotifier,
+		FirewallBackend:   cfg.Firewall.Backend,
+		BanSeconds:        cfg.Firewall.BanSeconds,
+		ZmprovBin:         cfg.Zimbra.ZmprovBin,
+		Notifier:          finalNotifier,
+		AbuseIPDB:         abuseClient,
+		AuditLog:          auditLog,
+		Store:             localStore,
+		Forwarder:         fwd,
+		Whitelist:         wl, // IPs bloqueadas se añaden al whitelist del engine automáticamente
+		GeoResolver:       geoResolver,
+		AllowedCountries:  cfg.GeoIP.AllowedCountries,
+		NotifyOnActions:   cfg.Notification.OnActions,
+		NotifyOnlyApplied: cfg.Notification.OnlyApplied,
+		UserNotifier:      userNotifier,
 	})
 
 	// Restaurar bans activos de firewalld (resiliencia al reinicio)

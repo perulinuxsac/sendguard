@@ -393,6 +393,9 @@ notification:
   # Push only these actions (audit log, SQLite and Controller always get all).
   # Values: block_ip | suspend_account | notify_only. Empty = everything.
   on_actions: []
+  # Push only containment that was actually applied: skip the ones omitted for
+  # an allowed country and the ones already in place. Failures are always sent.
+  only_applied: false
 
 # ── Daily report ─────────────────────────────────────────────────────────────
 daily_report:
@@ -532,7 +535,7 @@ Common causes:
 
 1. Confirm the correct mail log is configured (`zimbra.logs.main`). Check it is actively receiving new lines: `tail -f /var/log/mail.log`
 2. Check that the firewall backend matches the OS: `firewall.backend: "ufw"` on Ubuntu, `"firewalld-ipset"` (or `"firewalld"`) on RHEL.
-3. Check whether the source IP is from a country in `geoip.allowed_countries`: automatic containment is skipped for those (the alert is notified with "contención omitida").
+3. Check whether the source IP is from a country in `geoip.allowed_countries`: automatic containment is skipped for those (the alert arrives titled "Suspensión omitida — revisar" / "Bloqueo omitido — revisar", unless `notification.only_applied` is on).
 4. Lower the detection thresholds temporarily and watch `journalctl -u sendguard-agent -f` for `enforcement: IP bloqueada` or `enforcement: cuenta suspendida` messages.
 5. Verify the whitelist is not covering the test IP: `sendguard-ctl whitelist list` (private networks are always exempt)
 

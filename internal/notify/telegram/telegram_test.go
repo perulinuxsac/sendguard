@@ -283,3 +283,49 @@ func TestFormatoContieneTimestamp(t *testing.T) {
 		t.Errorf("mensaje debe contener la fecha del timestamp: %s", capturedText)
 	}
 }
+
+// sentText envía la alerta a un servidor falso y devuelve el texto del mensaje.
+func sentText(t *testing.T, a detection.Alert) string {
+	t.Helper()
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	if err := telegram.NewForTest(telegram.Config{Token: "tok", ChatID: "1"}, srv.URL).Notify(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]string
+	json.Unmarshal(body, &payload)
+	return payload["text"]
+}
+
+// Formato nuevo: resultado real, acciones del agente y cómo revertir.
+func TestFormatoResultadoRealYAcciones(t *testing.T) {
+	a := detection.Alert{
+		Module: "account_takeover", Action: detection.ActionSuspendAcct, Severity: detection.SeveritySuspend,
+		Score: 95, Account: "user@dominio.pe", IP: "203.0.113.7", Country: "CN", Server: "mail01",
+		Timestamp: time.Now(), Reasons: []string{"5 fallos y luego login exitoso"},
+		Outcome: detection.OutcomeApplied,
+		Effects: []detection.Effect{
+			{Outcome: detection.OutcomeApplied, Text: "Cuenta bloqueada en Zimbra"},
+			{Outcome: detection.OutcomeApplied, Text: "IP 203.0.113.7 bloqueada en el firewall por 1 h"},
+		},
+	}
+	text := sentText(t, a)
+	for _, want := range []string{"🔒 <b>Cuenta suspendida</b>", "<code>user@dominio.pe</code>",
+		"Robo de cuenta", "✅ Cuenta bloqueada en Zimbra", "🇨🇳 CN",
+		"sendguard-ctl unsuspend user@dominio.pe"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("falta %q en:\n%s", want, text)
+		}
+	}
+
+	a.Outcome = detection.OutcomeFailed
+	a.Effects = []detection.Effect{{Outcome: detection.OutcomeFailed, Text: "FALLÓ la suspensión — la cuenta sigue activa"}}
+	text = sentText(t, a)
+	if !strings.Contains(text, "❌ <b>FALLÓ la suspensión de la cuenta</b>") || strings.Contains(text, "unsuspend") {
+		t.Errorf("fallo mal presentado:\n%s", text)
+	}
+}

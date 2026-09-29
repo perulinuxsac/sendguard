@@ -190,6 +190,12 @@ notification:
   # Recomendado: solo suspend_account para recibir alertas solo cuando una cuenta es comprometida.
   on_actions:
     - suspend_account
+  # only_applied: avisar solo cuando la contención se ejecutó de verdad. No se
+  # notifican las omitidas por país permitido ni las ya aplicadas (cuenta ya
+  # suspendida, IP ya bloqueada). Los FALLOS se notifican siempre.
+  # El aviso dice el resultado real: "Cuenta suspendida", "FALLÓ la suspensión",
+  # "Suspensión omitida — revisar"…, con las acciones ejecutadas y cómo revertir.
+  only_applied: false
 
 # AbuseIPDB — enriquece alertas con reputación de IPs (registro gratuito en abuseipdb.com)
 # abuseipdb:

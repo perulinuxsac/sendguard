@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/perulinux/sendguard/internal/detection"
+	"github.com/perulinux/sendguard/internal/notify/present"
 )
 
 // Config configura el notificador webhook.
@@ -59,8 +61,23 @@ type payload struct {
 	Domain    string    `json:"domain,omitempty"`
 	Server    string    `json:"server,omitempty"`
 	Reasons   []string  `json:"reasons,omitempty"`
+	Country   string    `json:"country,omitempty"`
+
+	// Resultado real de la contención (ver detection.Outcome): applied |
+	// skipped | already | failed; vacío en alertas notify_only.
+	Outcome       string   `json:"outcome,omitempty"`
+	OutcomeDetail string   `json:"outcome_detail,omitempty"`
+	Effects       []effect `json:"effects,omitempty"`
+	Title         string   `json:"title"`
+
 	// Campo extra para facilitar Slack Block Kit / Teams Adaptive Cards.
 	Text string `json:"text"`
+}
+
+// effect es una acción ejecutada por el agente para la alerta.
+type effect struct {
+	Outcome string `json:"outcome"`
+	Text    string `json:"text"`
 }
 
 // Notify serializa la alerta y hace POST al endpoint configurado.
@@ -77,7 +94,14 @@ func (n *Notifier) Notify(ctx context.Context, alert detection.Alert) error {
 		Domain:    alert.Domain,
 		Server:    alert.Server,
 		Reasons:   alert.Reasons,
+		Country:   alert.Country,
+		Outcome:   string(alert.Outcome),
+		Title:     present.Build(alert).Title,
 		Text:      formatText(alert),
+	}
+	p.OutcomeDetail = alert.OutcomeDetail
+	for _, e := range alert.Effects {
+		p.Effects = append(p.Effects, effect{Outcome: string(e.Outcome), Text: e.Text})
 	}
 
 	body, err := json.Marshal(p)
@@ -106,21 +130,21 @@ func (n *Notifier) Notify(ctx context.Context, alert detection.Alert) error {
 // formatText genera una línea de texto legible para herramientas como Slack
 // que muestran el campo "text" como mensaje principal.
 func formatText(a detection.Alert) string {
-	labels := []string{"INFO", "WARN", "ALTO", "CRÍTICO"}
-	idx := int(a.Severity)
-	if idx >= len(labels) {
-		idx = len(labels) - 1
+	// Una línea legible en Slack/Teams: resultado real + objetivo + acciones.
+	text := present.Subject(a)
+	// La otra identidad como contexto: la cuenta en un bloqueo de IP, la IP en
+	// una suspensión (el título solo lleva el objetivo principal).
+	if target := present.Build(a).Target; a.Account != "" && a.Account != target {
+		text += " · cuenta " + a.Account
+	} else if a.IP != "" && a.IP != target {
+		text += " · IP " + a.IP
 	}
-	severity := labels[idx]
-
-	switch {
-	case a.IP != "" && a.Account != "":
-		return fmt.Sprintf("[SendGuard][%s] %s — IP: %s Cuenta: %s (score %d)", severity, a.Module, a.IP, a.Account, a.Score)
-	case a.IP != "":
-		return fmt.Sprintf("[SendGuard][%s] %s — IP: %s (score %d)", severity, a.Module, a.IP, a.Score)
-	case a.Account != "":
-		return fmt.Sprintf("[SendGuard][%s] %s — Cuenta: %s (score %d)", severity, a.Module, a.Account, a.Score)
-	default:
-		return fmt.Sprintf("[SendGuard][%s] %s (score %d)", severity, a.Module, a.Score)
+	var acts []string
+	for _, e := range a.Effects {
+		acts = append(acts, present.EffectIcon(e.Outcome)+" "+e.Text)
 	}
+	if len(acts) > 0 {
+		text += " — " + strings.Join(acts, "; ")
+	}
+	return fmt.Sprintf("%s [%s %d/100]", text, present.SeverityLabel(a.Severity), a.Score)
 }

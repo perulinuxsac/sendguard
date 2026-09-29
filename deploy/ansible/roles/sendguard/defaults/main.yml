@@ -44,6 +44,9 @@ sendguard_telegram_chat_id: ""
 sendguard_email_from: ""
 sendguard_email_to: []             # lista de destinatarios
 sendguard_notify_on_actions: []    # vacío = notificar todo; ej: ["block_ip","suspend_account"]
+# Avisar solo cuando la contención se ejecutó de verdad: no se notifican las
+# omitidas por país permitido ni las ya aplicadas. Los fallos se notifican siempre.
+sendguard_notify_only_applied: false
 # Aviso al PROPIO usuario cuando su cuenta es suspendida por compromiso (solo
 # suspend_account). Requiere sendguard_email_from; funciona aunque email_to esté vacío.
 sendguard_notify_suspended_user: true

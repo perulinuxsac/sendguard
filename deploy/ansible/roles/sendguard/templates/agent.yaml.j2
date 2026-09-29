@@ -111,6 +111,7 @@ notification:
 {% for a in sendguard_notify_on_actions %}
     - "{{ a }}"
 {% endfor %}
+  only_applied: {{ sendguard_notify_only_applied | bool | lower }}
 
 daily_report:
   hour: {{ sendguard_daily_report_hour }}

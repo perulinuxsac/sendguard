@@ -54,4 +54,29 @@ type Alert struct {
 	Country string // código ISO 3166-1 alpha-2 (PE, US, …); vacío si no se resolvió
 
 	Reasons []string // explicación legible de por qué se disparó
+
+	// Resultado real de la contención, lo completa el Enforcer (no los módulos).
+	// Las notificaciones se arman con esto y no con la acción pedida: un
+	// suspend_account puede terminar omitido (país permitido), ya aplicado o
+	// fallido, y el aviso debe decirlo.
+	Outcome       Outcome  // vacío = sin contención (notify_only) o no evaluado
+	OutcomeDetail string   // motivo de la omisión o error del fallo
+	Effects       []Effect // lo que el enforcer hizo (o intentó), en orden
+}
+
+// Outcome resume qué pasó con la contención pedida por la alerta.
+type Outcome string
+
+const (
+	OutcomeApplied Outcome = "applied" // se ejecutó
+	OutcomeSkipped Outcome = "skipped" // omitida a propósito (país permitido, IP privada)
+	OutcomeAlready Outcome = "already" // ya estaba aplicada (cuenta ya suspendida, IP ya bloqueada)
+	OutcomeFailed  Outcome = "failed"  // se intentó y falló
+)
+
+// Effect es un paso concreto ejecutado por el enforcer para una alerta
+// (suspender la cuenta, bloquear la IP, avisar al usuario…).
+type Effect struct {
+	Outcome Outcome
+	Text    string // descripción legible: "Cuenta bloqueada en Zimbra", "IP 1.2.3.4 bloqueada 1 h"
 }

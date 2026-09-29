@@ -7,11 +7,13 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"mime"
 	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/perulinux/sendguard/internal/detection"
+	"github.com/perulinux/sendguard/internal/notify/present"
 )
 
 const defaultSendmail = "/opt/zimbra/common/sbin/sendmail"
@@ -85,7 +87,9 @@ func (n *Notifier) buildMessage(alert detection.Alert) string {
 	// Headers MIME multipart
 	fmt.Fprintf(&sb, "From: SendGuard <%s>\r\n", n.cfg.From)
 	fmt.Fprintf(&sb, "To: %s\r\n", strings.Join(n.cfg.To, ", "))
-	fmt.Fprintf(&sb, "Subject: %s\r\n", formatSubject(alert))
+	// RFC 2047: el asunto lleva tildes y emoji; sin codificar, algunos
+	// clientes lo muestran roto.
+	fmt.Fprintf(&sb, "Subject: %s\r\n", mime.QEncoding.Encode("utf-8", present.Subject(alert)))
 	fmt.Fprintf(&sb, "MIME-Version: 1.0\r\n")
 	fmt.Fprintf(&sb, "Content-Type: multipart/alternative; boundary=\"%s\"\r\n", mimeBoundary)
 	fmt.Fprintf(&sb, "\r\n")
@@ -109,130 +113,213 @@ func (n *Notifier) buildMessage(alert detection.Alert) string {
 	return sb.String()
 }
 
-// buildPlain genera el cuerpo en texto plano (clientes sin HTML).
+// buildPlain genera el cuerpo en texto plano (clientes sin HTML). Misma
+// estructura que el HTML y Telegram: resultado → qué pasó → acciones → origen
+// → qué hacer.
 func buildPlain(alert detection.Alert, ts time.Time) string {
+	v := present.Build(alert)
 	var sb strings.Builder
-	sev := severityLabel(alert.Severity)
-	act := actionLabel(alert.Action, alert.Module)
 
-	fmt.Fprintf(&sb, "SendGuard — Alerta de Seguridad [%s]\n", sev)
-	fmt.Fprintf(&sb, "================================================\n\n")
-	fmt.Fprintf(&sb, "Fecha/Hora  : %s\n", ts.Format("2006-01-02 15:04:05 -07:00"))
-	fmt.Fprintf(&sb, "Módulo      : %s\n", alert.Module)
-	fmt.Fprintf(&sb, "Acción      : %s\n", act)
-	fmt.Fprintf(&sb, "Severidad   : %s (score: %d)\n", sev, alert.Score)
-	if alert.Server != "" {
-		fmt.Fprintf(&sb, "Servidor    : %s\n", alert.Server)
+	fmt.Fprintf(&sb, "%s %s\n", v.Icon, v.Title)
+	if v.Target != "" {
+		fmt.Fprintf(&sb, "%s\n", v.Target)
 	}
-	if alert.IP != "" {
-		fmt.Fprintf(&sb, "IP          : %s\n", alert.IP)
+	sb.WriteString("================================================\n")
+	if v.Next != "" {
+		fmt.Fprintf(&sb, "\n>> %s\n", v.Next)
 	}
-	if alert.Country != "" {
-		fmt.Fprintf(&sb, "País        : %s\n", alert.Country)
+
+	fmt.Fprintf(&sb, "\nQUÉ PASÓ  [%s · score %d/100]\n", present.SeverityLabel(alert.Severity), alert.Score)
+	if v.What != "" {
+		fmt.Fprintf(&sb, "%s\n", v.What)
 	}
-	if alert.Account != "" {
-		fmt.Fprintf(&sb, "Cuenta      : %s\n", alert.Account)
+	for _, r := range alert.Reasons {
+		fmt.Fprintf(&sb, "  • %s\n", r)
 	}
-	if alert.Domain != "" {
-		fmt.Fprintf(&sb, "Dominio     : %s\n", alert.Domain)
-	}
-	if len(alert.Reasons) > 0 {
-		fmt.Fprintf(&sb, "\nDetalle:\n")
-		for _, r := range alert.Reasons {
-			fmt.Fprintf(&sb, "  • %s\n", r)
+
+	if len(alert.Effects) > 0 {
+		sb.WriteString("\nACCIONES DEL AGENTE\n")
+		for _, e := range alert.Effects {
+			fmt.Fprintf(&sb, "  %s %s\n", present.EffectIcon(e.Outcome), e.Text)
 		}
+	}
+
+	sb.WriteString("\nORIGEN\n")
+	for _, kv := range originRows(alert, ts) {
+		fmt.Fprintf(&sb, "  %-10s %s\n", kv[0]+":", kv[1])
+	}
+
+	if v.Revert != "" {
+		fmt.Fprintf(&sb, "\nREVERTIR\n  %s\n", v.Revert)
 	}
 	fmt.Fprintf(&sb, "\n— SendGuard Agent\n")
 	return sb.String()
 }
 
-// buildHTML genera el cuerpo en HTML con diseño de tarjeta.
-func buildHTML(alert detection.Alert, ts time.Time) string {
-	sev := severityLabel(alert.Severity)
-	sevColor := severityColor(alert.Severity)
-	sevBg := severityBg(alert.Severity)
-	act := actionLabel(alert.Action, alert.Module)
-	icon := actionIcon(alert.Action, alert.Module)
-
-	var rows strings.Builder
-	addRow := func(label, value string) {
-		if value == "" {
-			return
+// originRows son los datos de contexto de la alerta, en el orden en que se
+// muestran. Omite los vacíos.
+func originRows(alert detection.Alert, ts time.Time) [][2]string {
+	var rows [][2]string
+	add := func(k, v string) {
+		if v != "" {
+			rows = append(rows, [2]string{k, v})
 		}
-		fmt.Fprintf(&rows,
-			`<tr><td style="padding:10px 16px;color:#6b7280;font-size:13px;white-space:nowrap;border-bottom:1px solid #f3f4f6;">%s</td>`+
-				`<td style="padding:10px 16px;color:#111827;font-size:13px;border-bottom:1px solid #f3f4f6;word-break:break-all;">%s</td></tr>`,
-			label, html.EscapeString(value))
+	}
+	add("IP", alert.IP)
+	add("País", present.Country(alert.Country))
+	add("Cuenta", alert.Account)
+	add("Dominio", alert.Domain)
+	add("Servidor", alert.Server)
+	add("Módulo", alert.Module)
+	add("Fecha", ts.Format("2006-01-02 15:04:05 -07:00"))
+	return rows
+}
+
+// palette son los colores de cada tono: acento, fondo suave y texto sobre fondo.
+type palette struct{ accent, soft, ink string }
+
+func tonePalette(t present.Tone) palette {
+	switch t {
+	case present.ToneFailed:
+		return palette{"#991b1b", "#fee2e2", "#7f1d1d"}
+	case present.ToneCritical:
+		return palette{"#dc2626", "#fef2f2", "#991b1b"}
+	case present.ToneHigh:
+		return palette{"#ea580c", "#fff7ed", "#9a3412"}
+	case present.ToneWarning:
+		return palette{"#d97706", "#fffbeb", "#92400e"}
+	case present.ToneMuted:
+		return palette{"#6b7280", "#f3f4f6", "#374151"}
+	default:
+		return palette{"#2563eb", "#eff6ff", "#1e40af"}
+	}
+}
+
+// effectColor colorea cada acción del agente según su resultado.
+func effectColor(o detection.Outcome) string {
+	switch o {
+	case detection.OutcomeApplied:
+		return "#15803d"
+	case detection.OutcomeFailed:
+		return "#b91c1c"
+	case detection.OutcomeAlready:
+		return "#4b5563"
+	default:
+		return "#b45309"
+	}
+}
+
+// buildHTML genera el cuerpo HTML: tarjeta con el resultado real arriba, qué
+// hacer, qué pasó, qué hizo el agente, origen y cómo revertir. Tablas y estilos
+// en línea para que se vea igual en Outlook, Gmail y el webmail de Zimbra.
+func buildHTML(alert detection.Alert, ts time.Time) string {
+	v := present.Build(alert)
+	p := tonePalette(v.Tone)
+	esc := html.EscapeString
+
+	section := func(title, body string) string {
+		return fmt.Sprintf(`
+  <tr><td style="padding:20px 28px 0 28px;">
+    <p style="margin:0 0 8px 0;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.08em;">%s</p>
+    %s
+  </td></tr>`, title, body)
 	}
 
-	addRow("Fecha / Hora", ts.Format("2006-01-02 15:04:05 -07:00"))
-	addRow("Módulo", alert.Module)
-	addRow("Servidor", alert.Server)
-	addRow("Dirección IP", alert.IP)
-	addRow("País", alert.Country)
-	addRow("Cuenta", alert.Account)
-	addRow("Dominio", alert.Domain)
+	var body strings.Builder
 
-	var reasonsHTML string
+	// Qué hacer (llamada a la acción) — lo primero después del título.
+	if v.Next != "" {
+		fmt.Fprintf(&body, `
+  <tr><td style="padding:20px 28px 0 28px;">
+    <div style="background:%s;border-left:4px solid %s;border-radius:6px;padding:12px 16px;font-size:14px;line-height:1.5;color:%s;">%s</div>
+  </td></tr>`, p.soft, p.accent, p.ink, esc(v.Next))
+	}
+
+	// Qué pasó
+	var what strings.Builder
+	fmt.Fprintf(&what, `<p style="margin:0;font-size:15px;font-weight:600;color:#111827;">%s</p>`, esc(v.What))
 	if len(alert.Reasons) > 0 {
-		var rb strings.Builder
-		rb.WriteString(`<ul style="margin:8px 0 0 0;padding-left:20px;color:#374151;font-size:13px;line-height:1.8;">`)
+		what.WriteString(`<ul style="margin:8px 0 0 0;padding-left:18px;color:#374151;font-size:13px;line-height:1.7;">`)
 		for _, r := range alert.Reasons {
-			fmt.Fprintf(&rb, `<li>%s</li>`, html.EscapeString(r))
+			fmt.Fprintf(&what, `<li>%s</li>`, esc(r))
 		}
-		rb.WriteString(`</ul>`)
-		reasonsHTML = fmt.Sprintf(`
-		<div style="margin:0 24px 24px 24px;background:#f9fafb;border-left:4px solid %s;border-radius:4px;padding:14px 16px;">
-			<p style="margin:0;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;">Detalle del evento</p>
-			%s
-		</div>`, sevColor, rb.String())
+		what.WriteString(`</ul>`)
+	}
+	body.WriteString(section("Qué pasó", what.String()))
+
+	// Acciones del agente
+	if len(alert.Effects) > 0 {
+		var acts strings.Builder
+		acts.WriteString(`<table width="100%" cellpadding="0" cellspacing="0">`)
+		for _, e := range alert.Effects {
+			fmt.Fprintf(&acts,
+				`<tr><td width="28" valign="top" style="padding:5px 0;font-size:15px;">%s</td>`+
+					`<td style="padding:5px 0;font-size:14px;color:%s;line-height:1.5;">%s</td></tr>`,
+				present.EffectIcon(e.Outcome), effectColor(e.Outcome), esc(e.Text))
+		}
+		acts.WriteString(`</table>`)
+		body.WriteString(section("Acciones del agente", acts.String()))
+	}
+
+	// Origen
+	var orig strings.Builder
+	orig.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:8px;">`)
+	for i, kv := range originRows(alert, ts) {
+		border := "border-top:1px solid #f3f4f6;"
+		if i == 0 {
+			border = ""
+		}
+		val := esc(kv[1])
+		if kv[0] == "IP" || kv[0] == "Cuenta" {
+			val = `<span style="font-family:SFMono-Regular,Consolas,monospace;">` + val + `</span>`
+		}
+		fmt.Fprintf(&orig,
+			`<tr><td width="96" style="padding:9px 14px;color:#6b7280;font-size:13px;%s">%s</td>`+
+				`<td style="padding:9px 14px;color:#111827;font-size:13px;word-break:break-all;%s">%s</td></tr>`,
+			border, kv[0], border, val)
+	}
+	orig.WriteString(`</table>`)
+	body.WriteString(section("Origen", orig.String()))
+
+	// Cómo revertir
+	if v.Revert != "" {
+		body.WriteString(section("Cómo revertir", fmt.Sprintf(
+			`<div style="background:#111827;color:#f9fafb;border-radius:6px;padding:10px 14px;font-family:SFMono-Regular,Consolas,monospace;font-size:13px;">%s</div>`,
+			esc(v.Revert))))
+	}
+
+	target := ""
+	if v.Target != "" {
+		target = fmt.Sprintf(`<p style="margin:6px 0 0 0;font-family:SFMono-Regular,Consolas,monospace;font-size:15px;color:#ffffff;word-break:break-all;">%s</p>`, esc(v.Target))
+	}
+	server := "SendGuard"
+	if alert.Server != "" {
+		server = "SendGuard · " + esc(alert.Server)
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>SendGuard Alerta</title></head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-<table width="100%%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:32px 16px;">
+<title>%s</title></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:28px 12px;">
 <tr><td align="center">
-<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08);">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.06);">
 
-  <!-- CABECERA -->
-  <tr><td style="background:%s;padding:28px 24px;">
-    <table width="100%%" cellpadding="0" cellspacing="0">
-    <tr>
-      <td>
-        <p style="margin:0;font-size:11px;font-weight:700;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:.1em;">Alerta de Seguridad</p>
-        <h1 style="margin:4px 0 0 0;font-size:22px;font-weight:700;color:#ffffff;">&#x1F6E1;&#xFE0F; SendGuard</h1>
-      </td>
-      <td align="right">
-        <span style="display:inline-block;background:rgba(255,255,255,.15);color:#ffffff;font-size:11px;font-weight:700;padding:4px 12px;border-radius:20px;letter-spacing:.08em;text-transform:uppercase;">%s</span>
-      </td>
-    </tr>
-    </table>
+  <!-- CABECERA: resultado real + objetivo -->
+  <tr><td style="background:%s;padding:22px 28px;">
+    <table width="100%%" cellpadding="0" cellspacing="0"><tr>
+      <td><p style="margin:0;font-size:11px;font-weight:700;color:rgba(255,255,255,.75);text-transform:uppercase;letter-spacing:.1em;">%s</p></td>
+      <td align="right"><span style="display:inline-block;background:rgba(255,255,255,.18);color:#ffffff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;letter-spacing:.06em;">%s · %d/100</span></td>
+    </tr></table>
+    <h1 style="margin:10px 0 0 0;font-size:22px;line-height:1.3;font-weight:700;color:#ffffff;">%s %s</h1>
+    %s
   </td></tr>
-
-  <!-- BADGE DE ACCIÓN -->
-  <tr><td style="background:%s;padding:16px 24px;border-bottom:3px solid %s;">
-    <p style="margin:0;font-size:20px;font-weight:700;color:%s;">%s %s</p>
-    <p style="margin:4px 0 0 0;font-size:13px;color:%s;opacity:.8;">Score de riesgo: <strong>%d / 100</strong></p>
-  </td></tr>
-
-  <!-- TABLA DE DETALLES -->
-  <tr><td style="padding:8px 0 0 0;">
-    <table width="100%%" cellpadding="0" cellspacing="0">
-      %s
-    </table>
-  </td></tr>
-
-  <!-- RAZONES -->
-  %s
-
-  <!-- FOOTER -->
-  <tr><td style="background:#f9fafb;padding:16px 24px;border-top:1px solid #e5e7eb;">
-    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">
-      Generado por <strong>SendGuard Agent</strong> &mdash; Sistema de protección para Zimbra<br>
-      <span style="font-size:11px;">%s</span>
+%s
+  <!-- PIE -->
+  <tr><td style="padding:24px 28px 22px 28px;">
+    <p style="margin:0;border-top:1px solid #e5e7eb;padding-top:14px;font-size:11px;color:#9ca3af;text-align:center;">
+      SendGuard Agent — protección para Zimbra · %s
     </p>
   </td></tr>
 
@@ -241,146 +328,13 @@ func buildHTML(alert detection.Alert, ts time.Time) string {
 </table>
 </body>
 </html>`,
-		headerColor(alert.Severity), // cabecera bg
-		sev,                         // badge severidad
-		sevBg, sevColor,             // acción bg / border
-		sevColor,                     // acción texto color
-		icon, html.EscapeString(act), // icono + texto acción
-		sevColor,                                // score color
-		alert.Score,                             // score valor
-		rows.String(),                           // filas de detalles
-		reasonsHTML,                             // bloque razones
-		ts.Format("2006-01-02 15:04:05 -07:00"), // timestamp footer
+		esc(v.Title),
+		p.accent,
+		server,
+		present.SeverityLabel(alert.Severity), alert.Score,
+		v.Icon, esc(v.Title),
+		target,
+		body.String(),
+		ts.Format("2006-01-02 15:04:05 -07:00"),
 	)
-}
-
-func formatSubject(alert detection.Alert) string {
-	target := alert.IP
-	if target == "" {
-		target = alert.Account
-	}
-	if target == "" {
-		target = alert.Domain
-	}
-	if target == "" {
-		target = alert.Module
-	}
-	server := alert.Server
-	if server == "" {
-		server = "sendguard"
-	}
-	return fmt.Sprintf("[SendGuard][%s] %s — %s (%s)",
-		severityLabel(alert.Severity), actionLabel(alert.Action, alert.Module), target, server)
-}
-
-func severityLabel(s detection.Severity) string {
-	switch s {
-	case detection.SeveritySuspend:
-		return "CRÍTICO"
-	case detection.SeverityHigh:
-		return "ALTO"
-	case detection.SeverityWarn:
-		return "MEDIO"
-	default:
-		return "INFO"
-	}
-}
-
-func severityColor(s detection.Severity) string {
-	switch s {
-	case detection.SeveritySuspend:
-		return "#dc2626"
-	case detection.SeverityHigh:
-		return "#ea580c"
-	case detection.SeverityWarn:
-		return "#d97706"
-	default:
-		return "#2563eb"
-	}
-}
-
-func severityBg(s detection.Severity) string {
-	switch s {
-	case detection.SeveritySuspend:
-		return "#fef2f2"
-	case detection.SeverityHigh:
-		return "#fff7ed"
-	case detection.SeverityWarn:
-		return "#fffbeb"
-	default:
-		return "#eff6ff"
-	}
-}
-
-func headerColor(s detection.Severity) string {
-	switch s {
-	case detection.SeveritySuspend:
-		return "#991b1b"
-	case detection.SeverityHigh:
-		return "#9a3412"
-	case detection.SeverityWarn:
-		return "#92400e"
-	default:
-		return "#1e40af"
-	}
-}
-
-// actionIcon devuelve el emoji HTML del icono según la acción. Para
-// ActionNotifyOnly usa el módulo para distinguir contextos informativos.
-func actionIcon(a detection.Action, module string) string {
-	switch a {
-	case detection.ActionBlockIP:
-		return "&#x1F6AB;"
-	case detection.ActionSuspendAcct:
-		return "&#x1F512;"
-	case detection.ActionUnsuspendAcct:
-		return "&#x1F513;"
-	case detection.ActionNotifyOnly:
-		switch module {
-		case "queue_monitor", "bounce_rate":
-			return "&#x1F4E8;" // 📨 sobre con flecha — alerta de entrega
-		case "dist_brute_force", "account_takeover":
-			return "&#x26A0;&#xFE0F;" // ⚠️ — peligro
-		default:
-			return "&#x1F514;" // 🔔 — notificación genérica
-		}
-	default:
-		return "&#x2139;&#xFE0F;"
-	}
-}
-
-// actionLabel traduce la acción a texto legible. Para ActionNotifyOnly usa el
-// módulo para dar contexto específico en lugar de un genérico "Notificación".
-func actionLabel(a detection.Action, module string) string {
-	switch a {
-	case detection.ActionBlockIP:
-		return "IP bloqueada en firewall"
-	case detection.ActionSuspendAcct:
-		return "Cuenta suspendida"
-	case detection.ActionUnsuspendAcct:
-		return "Cuenta rehabilitada"
-	case detection.ActionNotifyOnly:
-		return moduleNotifyLabel(module)
-	default:
-		return "Notificación"
-	}
-}
-
-// moduleNotifyLabel devuelve una etiqueta contextual según el módulo que emite
-// ActionNotifyOnly.
-func moduleNotifyLabel(module string) string {
-	switch module {
-	case "queue_monitor":
-		return "Alerta de reputación"
-	case "dist_brute_force":
-		return "Fuerza bruta distribuida"
-	case "domain_discovery":
-		return "Reconocimiento de dominios"
-	case "bounce_rate":
-		return "Tasa de rebote alta"
-	case "account_takeover":
-		return "Posible robo de cuenta"
-	default:
-		return "Actividad sospechosa"
-	}
 }

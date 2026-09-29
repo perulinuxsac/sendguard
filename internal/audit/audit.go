@@ -31,6 +31,12 @@ type Entry struct {
 	Domain    string    `json:"domain,omitempty"`
 	Server    string    `json:"server,omitempty"`
 	Reasons   []string  `json:"reasons,omitempty"`
+
+	// Resultado real de la contención: applied | skipped | already | failed
+	// (vacío en notify_only), con el motivo y los pasos ejecutados.
+	Outcome       string   `json:"outcome,omitempty"`
+	OutcomeDetail string   `json:"outcome_detail,omitempty"`
+	Effects       []string `json:"effects,omitempty"`
 }
 
 // Logger escribe entradas de auditoría en un archivo NDJSON.
@@ -68,6 +74,11 @@ func (l *Logger) Log(_ context.Context, alert detection.Alert) {
 		Domain:    alert.Domain,
 		Server:    alert.Server,
 		Reasons:   alert.Reasons,
+		Outcome:   string(alert.Outcome),
+	}
+	entry.OutcomeDetail = alert.OutcomeDetail
+	for _, e := range alert.Effects {
+		entry.Effects = append(entry.Effects, string(e.Outcome)+": "+e.Text)
 	}
 
 	data, err := json.Marshal(entry)

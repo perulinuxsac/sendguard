@@ -2,6 +2,7 @@ package email
 
 import (
 	"context"
+	"mime"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/perulinux/sendguard/internal/detection"
+	"github.com/perulinux/sendguard/internal/notify/present"
 )
 
 func sampleAlert() detection.Alert {
@@ -117,63 +119,93 @@ func TestBuildHTMLEscapesAndContains(t *testing.T) {
 	}
 }
 
-func TestFormatSubjectFallback(t *testing.T) {
-	// Con IP presente usa la IP como target.
+// El asunto va codificado (RFC 2047) y, decodificado, dice el resultado real.
+func TestSubjectCodificadoYLegible(t *testing.T) {
+	n := New(Config{From: "sg@dominio.com", To: []string{"noc@dominio.com"}})
 	a := sampleAlert()
-	subj := formatSubject(a)
-	if !strings.Contains(subj, "203.0.113.7") || !strings.Contains(subj, "mail01") {
-		t.Errorf("subject inesperado: %q", subj)
+	a.Outcome = detection.OutcomeApplied
+	msg := n.buildMessage(a)
+	var raw string
+	for _, l := range strings.Split(msg, "\r\n") {
+		if strings.HasPrefix(l, "Subject: ") {
+			raw = strings.TrimPrefix(l, "Subject: ")
+		}
 	}
-
-	// Sin IP ni cuenta ni dominio, cae al módulo; sin server usa "sendguard".
-	a2 := detection.Alert{Module: "queue_monitor", Action: detection.ActionNotifyOnly, Severity: detection.SeverityWarn}
-	subj2 := formatSubject(a2)
-	if !strings.Contains(subj2, "queue_monitor") || !strings.Contains(subj2, "sendguard") {
-		t.Errorf("subject fallback inesperado: %q", subj2)
+	if !strings.HasPrefix(raw, "=?utf-8?q?") {
+		t.Fatalf("el asunto debe ir codificado RFC 2047: %q", raw)
+	}
+	subj, err := new(mime.WordDecoder).DecodeHeader(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[SendGuard] 🔒 Cuenta suspendida: victim@dominio.com (mail01)"
+	if subj != want {
+		t.Errorf("asunto: got %q, want %q", subj, want)
 	}
 }
 
-func TestSeverityLabels(t *testing.T) {
-	cases := map[detection.Severity]string{
-		detection.SeveritySuspend: "CRÍTICO",
-		detection.SeverityHigh:    "ALTO",
-		detection.SeverityWarn:    "MEDIO",
-		detection.SeverityLog:     "INFO",
-	}
-	for sev, want := range cases {
-		if got := severityLabel(sev); got != want {
-			t.Errorf("severityLabel(%d): got %q, want %q", sev, got, want)
+// (a)/(b): una suspensión fallida NO puede verse como "Cuenta suspendida".
+func TestSuspensionFallidaSeVeComoFallo(t *testing.T) {
+	a := sampleAlert()
+	a.Outcome = detection.OutcomeFailed
+	a.OutcomeDetail = "FALLÓ la suspensión — la cuenta sigue activa. zmprov: account not found"
+	a.Effects = []detection.Effect{{Outcome: detection.OutcomeFailed, Text: a.OutcomeDetail}}
+
+	for name, body := range map[string]string{
+		"plain": buildPlain(a, a.Timestamp),
+		"html":  buildHTML(a, a.Timestamp),
+	} {
+		if !strings.Contains(body, "FALLÓ la suspensión de la cuenta") || !strings.Contains(body, "sigue ACTIVA") {
+			t.Errorf("%s: debe decir que la suspensión falló y la cuenta sigue activa", name)
 		}
-		// Color/bg/header no deben estar vacíos para ninguna severidad.
-		if severityColor(sev) == "" || severityBg(sev) == "" || headerColor(sev) == "" {
-			t.Errorf("severidad %d: algún color vacío", sev)
+		if strings.Contains(body, "Cuenta suspendida") {
+			t.Errorf("%s: no debe decir 'Cuenta suspendida' si falló", name)
+		}
+		if strings.Contains(body, "sendguard-ctl unsuspend") {
+			t.Errorf("%s: no hay nada que revertir si la suspensión falló", name)
 		}
 	}
 }
 
-func TestActionLabelAndIcon(t *testing.T) {
-	actions := []detection.Action{
-		detection.ActionBlockIP, detection.ActionSuspendAcct, detection.ActionUnsuspendAcct,
-		detection.ActionNotifyOnly,
+// Suspensión aplicada: muestra las acciones del agente y cómo revertir.
+func TestSuspensionAplicadaMuestraAccionesYRevertir(t *testing.T) {
+	a := sampleAlert()
+	a.Outcome = detection.OutcomeApplied
+	a.Country = "cn"
+	a.Effects = []detection.Effect{
+		{Outcome: detection.OutcomeApplied, Text: "Cuenta bloqueada en Zimbra (zimbraAccountStatus=locked)"},
+		{Outcome: detection.OutcomeApplied, Text: "IP 203.0.113.7 bloqueada en el firewall por 1 h"},
 	}
-	for _, a := range actions {
-		if actionLabel(a, "") == "" {
-			t.Errorf("actionLabel(%q) vacío", a)
-		}
-		if actionIcon(a, "") == "" {
-			t.Errorf("actionIcon(%q) vacío", a)
+	for name, body := range map[string]string{
+		"plain": buildPlain(a, a.Timestamp),
+		"html":  buildHTML(a, a.Timestamp),
+	} {
+		for _, want := range []string{"Cuenta suspendida", "Cuenta bloqueada en Zimbra",
+			"bloqueada en el firewall por 1 h", "sendguard-ctl unsuspend victim@dominio.com", "🇨🇳 CN"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: falta %q", name, want)
+			}
 		}
 	}
+}
 
-	// notify_only usa el módulo para dar contexto.
-	mods := []string{"queue_monitor", "dist_brute_force", "domain_discovery",
-		"bounce_rate", "account_takeover", "otro"}
-	for _, m := range mods {
-		if actionLabel(detection.ActionNotifyOnly, m) == "" {
-			t.Errorf("actionLabel(notify_only, %q) vacío", m)
-		}
-		if actionIcon(detection.ActionNotifyOnly, m) == "" {
-			t.Errorf("actionIcon(notify_only, %q) vacío", m)
+// Omitida por país permitido: título de revisión, no de suspensión.
+func TestSuspensionOmitidaPideRevision(t *testing.T) {
+	a := sampleAlert()
+	a.Outcome = detection.OutcomeSkipped
+	a.Effects = []detection.Effect{{Outcome: detection.OutcomeSkipped, Text: "Suspensión omitida: país permitido (PE)"}}
+	body := buildHTML(a, a.Timestamp)
+	if !strings.Contains(body, "Suspensión omitida — revisar") || !strings.Contains(body, "país permitido") {
+		t.Error("una suspensión omitida debe titularse como revisión")
+	}
+}
+
+func TestTonePaletteCompleta(t *testing.T) {
+	for _, tone := range []present.Tone{present.ToneInfo, present.ToneMuted, present.ToneWarning,
+		present.ToneHigh, present.ToneCritical, present.ToneFailed} {
+		p := tonePalette(tone)
+		if p.accent == "" || p.soft == "" || p.ink == "" {
+			t.Errorf("tono %d: color vacío %+v", tone, p)
 		}
 	}
 }

@@ -32,6 +32,9 @@ sendguard_email_to:
 # Audit log, SQLite y Controller registran todo igualmente; esto solo filtra el push.
 sendguard_notify_on_actions:
   - "suspend_account"
+# true = avisar solo cuando la cuenta/IP quedó bloqueada de verdad (no las
+# omitidas por país permitido ni las ya aplicadas). Los fallos se avisan siempre.
+sendguard_notify_only_applied: false
 
 # Controller central (vacío = standalone).
 # sendguard_controller_url: "https://controller.perulinux.pe"

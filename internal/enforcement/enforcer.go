@@ -60,6 +60,9 @@ type Config struct {
 	// NotifyOnActions filtra las notificaciones push (Telegram/email/webhook) por acción.
 	// Si está vacío se notifica todo. Valores activos: block_ip | suspend_account | notify_only
 	NotifyOnActions []string // vacío = notificar todo
+	// NotifyOnlyApplied limita las notificaciones push a las contenciones
+	// ejecutadas (y a los fallos, que se avisan siempre).
+	NotifyOnlyApplied bool
 }
 
 // actionTimeout acota cada comando externo (firewall-cmd, ipset, zmprov…)
@@ -237,30 +240,28 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 			slog.Warn("enforcement: alerta block_ip sin IP, ignorando")
 			return
 		}
-		e.blockIP(ctx, alert)
+		alert.Effects = []detection.Effect{e.blockIP(ctx, alert)}
 
 	case detection.ActionSuspendAcct:
 		if alert.Account == "" {
 			slog.Warn("enforcement: alerta suspend_account sin cuenta, ignorando")
 			return
 		}
-		e.suspendAccount(ctx, alert)
+		alert.Effects = e.suspendAccount(ctx, alert)
 
 	case detection.ActionNotifyOnly:
 		slog.Info("enforcement: notify_only — sin acción de contención")
 	}
 
-	// País permitido: la contención (bloqueo/suspensión) fue omitida
-	// en el método correspondiente, pero la alerta se registra y SE NOTIFICA:
-	// un atacante operando desde una IP nacional (o un VPS/VPN local) no debe
-	// pasar desapercibido. La marca deja claro que hace falta revisión manual.
-	if isContainmentAction(alert.Action) && e.isIPFromAllowedCountry(alert.IP) {
-		country := e.cfg.GeoResolver.Country(baseIP(alert.IP))
-		if alert.Country == "" {
-			alert.Country = country
+	// El resultado de la alerta es el de su acción principal (el primer
+	// efecto): las notificaciones se titulan con lo que pasó de verdad, no con
+	// lo que pidió el módulo. País permitido → omitida pero SE NOTIFICA (salvo
+	// NotifyOnlyApplied): un atacante con IP nacional no debe pasar desapercibido.
+	if len(alert.Effects) > 0 {
+		alert.Outcome = alert.Effects[0].Outcome
+		if alert.Outcome != detection.OutcomeApplied {
+			alert.OutcomeDetail = alert.Effects[0].Text
 		}
-		alert.Reasons = append(alert.Reasons,
-			fmt.Sprintf("⚠ contención omitida: IP de país permitido (%s) — revisar manualmente", country))
 	}
 
 	if e.cfg.Forwarder != nil {
@@ -287,6 +288,16 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 		}
 	}
 
+	// NotifyOnlyApplied: avisar solo cuando la contención se ejecutó de verdad.
+	// Los fallos se avisan SIEMPRE (la cuenta o la IP siguen activas y hay que
+	// actuar a mano); lo omitido por país permitido y lo ya aplicado, no.
+	if e.cfg.NotifyOnlyApplied &&
+		(alert.Outcome == detection.OutcomeSkipped || alert.Outcome == detection.OutcomeAlready) {
+		slog.Info("enforcement: notificación omitida (only_applied)",
+			"module", alert.Module, "outcome", alert.Outcome, "ip", alert.IP, "account", alert.Account)
+		return
+	}
+
 	// Enriquecer la notificación con el país de origen de la IP para dejar
 	// constancia completa. El path de bloqueo lo resuelve vía AbuseIPDB sobre una
 	// copia local, pero las suspensiones de cuenta no pasan por ahí; garantizamos
@@ -301,18 +312,21 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 }
 
 // blockIP bloquea una IP usando el BanSeconds configurado globalmente.
-func (e *Enforcer) blockIP(ctx context.Context, alert detection.Alert) {
-	if err := e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds); err != nil {
+func (e *Enforcer) blockIP(ctx context.Context, alert detection.Alert) detection.Effect {
+	eff, err := e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds)
+	if err != nil {
 		slog.Error("enforcement: fallo al bloquear IP", "ip", alert.IP, "error", err)
 	}
+	return eff
 }
 
 // blockIPWithTTL bloquea una IP o un CIDR con un TTL explícito (0 = permanente).
-// Retorna nil en las omisiones deliberadas (IP privada, país permitido, ya
-// bloqueada) y error solo cuando el bloqueo se intentó y falló.
-func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, banSecs int) error {
+// Retorna el efecto para la notificación (aplicado, omitido, ya bloqueada o
+// fallido) y un error solo cuando el bloqueo se intentó y falló.
+func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, banSecs int) (detection.Effect, error) {
 	if !ValidBlockTarget(alert.IP) {
-		return fmt.Errorf("IP/CIDR inválido: %s", alert.IP)
+		err := fmt.Errorf("IP/CIDR inválido: %s", alert.IP)
+		return failedEffect(fmt.Sprintf("No se pudo bloquear %s: IP/CIDR inválido", alert.IP)), err
 	}
 	// Canonicalizar CIDRs ("200.25.47.5/24" → "200.25.47.0/24") para que la
 	// deduplicación, el firewall y el unblock posterior usen la misma clave.
@@ -325,7 +339,8 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 	if isPrivateIP(baseIP(alert.IP)) {
 		slog.Warn("enforcement: IP privada/local, bloqueo de firewall omitido",
 			"ip", alert.IP, "module", alert.Module)
-		return nil
+		return detection.Effect{Outcome: detection.OutcomeSkipped,
+			Text: fmt.Sprintf("IP %s no bloqueada: red privada/local", alert.IP)}, nil
 	}
 
 	// País permitido: no se bloquea en el firewall, no se persiste en SQLite y NO
@@ -343,7 +358,8 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		country := e.cfg.GeoResolver.Country(baseIP(alert.IP))
 		slog.Info("enforcement: IP de país permitido, bloqueo de firewall omitido",
 			"ip", alert.IP, "country", country, "module", alert.Module)
-		return nil
+		return detection.Effect{Outcome: detection.OutcomeSkipped,
+			Text: fmt.Sprintf("IP %s no bloqueada: país permitido (%s) — revisar manualmente", alert.IP, country)}, nil
 	}
 
 	expiry := banExpiry(banSecs)
@@ -356,11 +372,16 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		if !expiry.After(entry.expiry.Add(time.Minute)) {
 			e.mu.Unlock()
 			slog.Info("enforcement: IP ya bloqueada, omitiendo duplicado", "ip", alert.IP, "expiry", entry.expiry.Format("15:04:05"))
-			return nil
+			return detection.Effect{Outcome: detection.OutcomeAlready,
+				Text: fmt.Sprintf("IP %s ya estaba bloqueada (%s)", alert.IP, untilText(entry.expiry))}, nil
 		}
 		e.blockedIPs[alert.IP] = blockedIP{expiry: expiry, module: alert.Module}
 		e.mu.Unlock()
-		return e.extendBan(ctx, alert, banSecs, entry)
+		if err := e.extendBan(ctx, alert, banSecs, entry); err != nil {
+			return failedEffect(fmt.Sprintf("Falló la extensión del bloqueo de %s: %v", alert.IP, err)), err
+		}
+		return detection.Effect{Outcome: detection.OutcomeApplied,
+			Text: fmt.Sprintf("Bloqueo de IP %s extendido %s", alert.IP, banText(banSecs))}, nil
 	}
 	e.blockedIPs[alert.IP] = blockedIP{expiry: expiry, module: alert.Module}
 	if _, ipnet, err := net.ParseCIDR(alert.IP); err == nil {
@@ -401,7 +422,8 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 		if e.cfg.Store != nil {
 			e.cfg.Store.DeleteBan(alert.IP)
 		}
-		return fmt.Errorf("firewall: %w", err)
+		err = fmt.Errorf("firewall: %w", err)
+		return failedEffect(fmt.Sprintf("Falló el bloqueo de IP %s: %v", alert.IP, err)), err
 	}
 
 	e.blocksTotal.Add(1)
@@ -416,7 +438,45 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 	if e.cfg.Whitelist != nil {
 		_ = e.cfg.Whitelist.Silence(alert.IP)
 	}
-	return nil
+	return detection.Effect{Outcome: detection.OutcomeApplied,
+		Text: fmt.Sprintf("IP %s bloqueada en el firewall %s", alert.IP, banText(banSecs))}, nil
+}
+
+// failedEffect crea un efecto fallido con el texto dado.
+func failedEffect(text string) detection.Effect {
+	return detection.Effect{Outcome: detection.OutcomeFailed, Text: text}
+}
+
+// banText describe la duración de un ban para las notificaciones.
+func banText(banSecs int) string {
+	if banSecs <= 0 {
+		return "de forma permanente"
+	}
+	return "por " + humanDuration(time.Duration(banSecs)*time.Second)
+}
+
+// untilText describe hasta cuándo dura un ban vigente.
+func untilText(expiry time.Time) string {
+	if time.Until(expiry) >= 50*365*24*time.Hour {
+		return "permanente"
+	}
+	return "hasta las " + expiry.Format("15:04")
+}
+
+// humanDuration formatea duraciones de ban: "45 min", "1 h", "2 h 30 min", "3 d".
+func humanDuration(d time.Duration) string {
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%d min", int(d.Minutes()))
+	case d < 24*time.Hour:
+		h, m := int(d.Hours()), int(d.Minutes())%60
+		if m == 0 {
+			return fmt.Sprintf("%d h", h)
+		}
+		return fmt.Sprintf("%d h %d min", h, m)
+	default:
+		return fmt.Sprintf("%d d", int(d.Hours())/24)
+	}
 }
 
 // banExpiry convierte un TTL en segundos (0 = permanente) en la expiración
@@ -481,14 +541,15 @@ func remainingSecs(expiry, now time.Time) int {
 }
 
 // suspendAccount suspende una cuenta Zimbra vía zmprov y bloquea la IP atacante si está presente.
-func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
+func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) []detection.Effect {
 	// Si la alerta tiene una IP de un país permitido, omitir la suspensión.
-	// La notificación fluye igualmente desde handle().
+	// La notificación fluye igualmente desde handle(), marcada como omitida.
 	if e.isIPFromAllowedCountry(alert.IP) {
 		country := e.cfg.GeoResolver.Country(alert.IP)
 		slog.Info("enforcement: IP de país permitido, suspensión de cuenta omitida",
 			"ip", alert.IP, "country", country, "account", alert.Account, "module", alert.Module)
-		return
+		return []detection.Effect{{Outcome: detection.OutcomeSkipped,
+			Text: fmt.Sprintf("Suspensión omitida: la IP %s es de un país permitido (%s) — revisar manualmente", alert.IP, country)}}
 	}
 
 	// Dedup: si la cuenta ya fue suspendida en esta sesión, no re-ejecutar zmprov
@@ -496,17 +557,21 @@ func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 	// sostenido generaban correos duplicados). La IP de la alerta sí se bloquea:
 	// puede ser un atacante nuevo sobre la misma cuenta.
 	e.mu.Lock()
-	_, alreadySuspended := e.suspendedAccts[alert.Account]
+	prev, alreadySuspended := e.suspendedAccts[alert.Account]
 	e.mu.Unlock()
 	if alreadySuspended {
 		slog.Info("enforcement: cuenta ya suspendida, omitiendo re-suspensión",
 			"account", alert.Account, "module", alert.Module)
+		effects := []detection.Effect{{Outcome: detection.OutcomeAlready,
+			Text: fmt.Sprintf("La cuenta ya estaba suspendida (desde las %s, %s)", prev.timestamp.Format("15:04"), prev.module)}}
 		if alert.IP != "" {
-			if err := e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds); err != nil {
+			eff, err := e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds)
+			if err != nil {
 				slog.Error("enforcement: fallo al bloquear IP de la alerta", "ip", alert.IP, "error", err)
 			}
+			effects = append(effects, eff)
 		}
-		return
+		return effects
 	}
 
 	zmprov := e.cfg.ZmprovBin
@@ -523,13 +588,31 @@ func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 			"error", err,
 			"output", string(out),
 		)
-		return
+		// La cuenta sigue ACTIVA: el aviso debe decirlo (antes llegaba como
+		// "Cuenta suspendida"). No se bloquea la IP ni se avisa al usuario.
+		detail := strings.TrimSpace(string(out))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return []detection.Effect{failedEffect(
+			fmt.Sprintf("FALLÓ la suspensión — la cuenta sigue activa. zmprov: %s", truncate(detail, 300)))}
 	}
 	e.suspsTotal.Add(1)
 	e.mu.Lock()
 	e.suspendedAccts[alert.Account] = suspendedAcct{module: alert.Module, timestamp: time.Now()}
 	e.mu.Unlock()
 	slog.Info("enforcement: cuenta suspendida", "account", alert.Account, "module", alert.Module)
+	effects := []detection.Effect{{Outcome: detection.OutcomeApplied,
+		Text: "Cuenta bloqueada en Zimbra (zimbraAccountStatus=locked)"}}
+
+	// Bloquear también la IP atacante en el firewall si está presente en la alerta.
+	if alert.IP != "" {
+		eff, err := e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds)
+		if err != nil {
+			slog.Error("enforcement: fallo al bloquear IP de la alerta", "ip", alert.IP, "error", err)
+		}
+		effects = append(effects, eff)
+	}
 
 	// Avisar al propio usuario que su cuenta fue suspendida por compromiso.
 	// Se envía DESPUÉS del lock: la cuenta locked sigue recibiendo correo pero
@@ -538,17 +621,23 @@ func (e *Enforcer) suspendAccount(ctx context.Context, alert detection.Alert) {
 		if err := e.cfg.UserNotifier.NotifySuspendedUser(ctx, alert.Account, alert); err != nil {
 			slog.Warn("enforcement: fallo al enviar aviso al usuario suspendido",
 				"account", alert.Account, "error", err)
+			effects = append(effects, failedEffect("No se pudo enviar el aviso al usuario: "+truncate(err.Error(), 200)))
 		} else {
 			slog.Info("enforcement: aviso de suspensión enviado al usuario", "account", alert.Account)
+			effects = append(effects, detection.Effect{Outcome: detection.OutcomeApplied,
+				Text: "Aviso enviado al usuario"})
 		}
 	}
+	return effects
+}
 
-	// Bloquear también la IP atacante en el firewall si está presente en la alerta.
-	if alert.IP != "" {
-		if err := e.blockIPWithTTL(ctx, alert, e.cfg.BanSeconds); err != nil {
-			slog.Error("enforcement: fallo al bloquear IP de la alerta", "ip", alert.IP, "error", err)
-		}
+// truncate acorta s a n caracteres (runas) para no inflar las notificaciones.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
 	}
+	return string(r[:n]) + "…"
 }
 
 // unblockWithTimeout elimina la regla del firewall acotada por actionTimeout.
@@ -557,16 +646,6 @@ func (e *Enforcer) unblockWithTimeout(ctx context.Context, ip string) error {
 	ctx, cancel := actionCtx(ctx)
 	defer cancel()
 	return e.fw.Unblock(ctx, ip)
-}
-
-// isContainmentAction retorna true para las acciones que ejecutan contención
-// sobre el servidor (y que por tanto pueden haberse omitido por país permitido).
-func isContainmentAction(a detection.Action) bool {
-	switch a {
-	case detection.ActionBlockIP, detection.ActionSuspendAcct:
-		return true
-	}
-	return false
 }
 
 // isValidIP verifica que el string sea una dirección IPv4 válida.
@@ -953,7 +1032,7 @@ func (e *Enforcer) Block(ctx context.Context, ip string, ttlOverride int) error 
 		Action:    detection.ActionBlockIP,
 		Timestamp: time.Now(),
 	}
-	if err := e.blockIPWithTTL(ctx, alert, banSecs); err != nil {
+	if _, err := e.blockIPWithTTL(ctx, alert, banSecs); err != nil {
 		// Propagar: la API/ctl no deben reportar "bloqueada" si el firewall falló.
 		return err
 	}

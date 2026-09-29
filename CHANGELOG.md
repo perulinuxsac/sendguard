@@ -9,6 +9,43 @@ Las versiones v1.0.6 – v1.0.10 surgieron de la respuesta a un incidente de
 compromiso masivo de cuentas en `webmail.perucloud.pe` (12 jun 2026), en el
 que cuentas hackeadas enviaban spam falseando el `From` del sobre.
 
+## [1.3.0] - Sin publicar
+
+Las alertas dicen lo que el agente hizo de verdad, no lo que pidió el módulo.
+
+### Corregido
+- **Suspensión fallida notificada como "Cuenta suspendida".** Si `zmprov`
+  fallaba, el agente solo lo anotaba en su log y el aviso llegaba como
+  "Cuenta suspendida": el administrador creía bloqueada una cuenta que seguía
+  activa. Ahora llega como **"❌ FALLÓ la suspensión de la cuenta"**, con el
+  error de `zmprov` y el comando para suspenderla a mano; no se bloquea la IP
+  ni se cuenta la suspensión.
+
+### Añadido
+- **Resultado real en cada alerta** (`Outcome`: applied | skipped | already |
+  failed, con su motivo) y la lista de **acciones ejecutadas** (cuenta
+  bloqueada, IP bloqueada y por cuánto, aviso al usuario…). El título del aviso
+  sale de ese resultado: "Cuenta suspendida", "FALLÓ la suspensión",
+  "Suspensión omitida — revisar" (país permitido), "Cuenta ya suspendida —
+  nueva actividad", y sus equivalentes para IPs.
+- **`notification.only_applied`** (Ansible: `sendguard_notify_only_applied`,
+  default `false`): avisar solo cuando la contención se ejecutó de verdad. No
+  se notifican las omitidas por país permitido ni las ya aplicadas; los fallos
+  se notifican siempre.
+- **Rediseño de los avisos** (Telegram, email y webhook comparten
+  `internal/notify/present`): resultado y objetivo arriba, qué pasó en lenguaje
+  llano, acciones del agente con ✅/⚠️/❌, origen con bandera del país, qué
+  hacer y el comando para revertir. El asunto del correo se codifica según
+  RFC 2047 (tildes y emoji se ven bien en cualquier cliente).
+- El webhook y el audit log incluyen `outcome`, `outcome_detail` y `effects`;
+  el webhook además `title` y `country`.
+
+### Cambiado
+- El texto del webhook (`text`) usa el título nuevo; la severidad 1 se muestra
+  como `MEDIO` (antes `WARN`), igual que en los demás canales.
+- La marca "⚠ contención omitida…" ya no se agrega a `reasons`: va en
+  `outcome_detail`.
+
 ## [1.2.0] - 2026-09-28
 
 Correcciones de la auditoría completa del proyecto.

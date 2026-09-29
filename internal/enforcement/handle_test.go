@@ -129,15 +129,15 @@ func TestHandleAllowedCountryNotificaSinContencion(t *testing.T) {
 	if len(n.alerts) != 3 {
 		t.Fatalf("país permitido: debe notificarse aunque la contención se omita, got %d alerts", len(n.alerts))
 	}
-	// Las acciones de contención llevan la marca de omisión; notify_only no
-	// ejecuta contención y no debe llevarla.
+	// Las acciones de contención salen como omitidas, con el motivo; notify_only
+	// no ejecuta contención y no lleva resultado.
 	for _, a := range n.alerts[:2] {
-		if !hasReason(a, "contención omitida") {
-			t.Errorf("%s: falta la marca de contención omitida, reasons=%v", a.Action, a.Reasons)
+		if a.Outcome != detection.OutcomeSkipped || !strings.Contains(a.OutcomeDetail, "país permitido") {
+			t.Errorf("%s: outcome=%q detail=%q, want skipped por país permitido", a.Action, a.Outcome, a.OutcomeDetail)
 		}
 	}
-	if hasReason(n.alerts[2], "contención omitida") {
-		t.Errorf("notify_only no ejecuta contención, no debe llevar la marca: %v", n.alerts[2].Reasons)
+	if n.alerts[2].Outcome != "" {
+		t.Errorf("notify_only no ejecuta contención, no debe llevar resultado: %q", n.alerts[2].Outcome)
 	}
 	// Sin contención: nada debe quedar registrado como bloqueado o suspendido.
 	if got := len(e.BlockedIPs()); got != 0 {
@@ -146,16 +146,6 @@ func TestHandleAllowedCountryNotificaSinContencion(t *testing.T) {
 	if got := len(e.SuspendedAccounts()); got != 0 {
 		t.Errorf("país permitido: no debe haber cuentas suspendidas, got %d", got)
 	}
-}
-
-// hasReason indica si alguna razón de la alerta contiene el substring dado.
-func hasReason(a detection.Alert, substr string) bool {
-	for _, r := range a.Reasons {
-		if strings.Contains(r, substr) {
-			return true
-		}
-	}
-	return false
 }
 
 func TestHandleNoAllowedCountryNotifica(t *testing.T) {

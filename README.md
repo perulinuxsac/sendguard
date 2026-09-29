@@ -15,7 +15,7 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 - **Allowed countries** — containment is skipped for IPs from the countries you list; those alerts are still notified for manual review (see [Allowed countries](#allowed-countries))
 - **Safe by default** — private networks (RFC 1918), loopback and link-local are never blocked
 - **AbuseIPDB enrichment** — annotates blocks with reputation scores
-- **Telegram, webhook and email notifications** — alerts on block/suspend actions, filterable per action, plus a daily email summary
+- **Telegram, webhook and email notifications** — each alert states what actually happened (applied, skipped for an allowed country, already in place, or **failed**), the steps the agent took and how to revert them; filterable per action or to applied containment only, plus a daily email summary
 - **Notification throttling** — per-IP/account cooldown and global rate cap to prevent alert floods
 - **REST API** — observe state and issue manual commands without touching the server
 - **SQLite persistence** — bans and runtime whitelist changes survive agent restarts and redeploys
@@ -188,6 +188,7 @@ The most sophisticated module. It watches for the worst-case outcome of a brute-
 `geoip.allowed_countries` lists the countries where your users normally are (e.g. `PE`, `US`). For an IP from one of those countries, **automatic** containment is skipped — no firewall block, no suspension — but the alert is still recorded and **notified**, marked for manual review. This avoids locking out legitimate users, while an attacker operating from a local IP or VPN does not go unnoticed.
 
 - Manual blocks (`sendguard-ctl block`, API) are never vetoed by country.
+- Set `notification.only_applied: true` to stop receiving these "skipped" alerts (failures are still always notified).
 - Codes are case-insensitive (`pe` = `PE`).
 - Empty list = every country is "normal"; nothing is skipped for country reasons.
 

@@ -173,7 +173,7 @@ func TestFormatTextSeverityLabels(t *testing.T) {
 		label    string
 	}{
 		{detection.SeverityLog, "INFO"},
-		{detection.SeverityWarn, "WARN"},
+		{detection.SeverityWarn, "MEDIO"},
 		{detection.SeverityHigh, "ALTO"},
 		{detection.SeveritySuspend, "CRÍTICO"},
 	}
@@ -183,5 +183,37 @@ func TestFormatTextSeverityLabels(t *testing.T) {
 		if !strings.Contains(text, c.label) {
 			t.Errorf("severity %d: texto no contiene %q: %q", c.severity, c.label, text)
 		}
+	}
+}
+
+// El texto y el payload llevan el resultado real y las acciones del agente.
+func TestPayloadIncluyeResultadoYAcciones(t *testing.T) {
+	a := makeAlert(func(a *detection.Alert) {
+		a.Action = detection.ActionSuspendAcct
+		a.Account = "user@example.com"
+		a.Outcome = detection.OutcomeFailed
+		a.OutcomeDetail = "FALLÓ la suspensión — la cuenta sigue activa"
+		a.Effects = []detection.Effect{{Outcome: detection.OutcomeFailed, Text: "FALLÓ la suspensión — la cuenta sigue activa"}}
+	})
+	text := formatText(a)
+	for _, want := range []string{"FALLÓ la suspensión de la cuenta", "user@example.com", "❌", "IP 1.2.3.4"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text no contiene %q: %q", want, text)
+		}
+	}
+
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+	}))
+	defer srv.Close()
+	if err := New(Config{URL: srv.URL}).Notify(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if got["outcome"] != "failed" || got["title"] != "FALLÓ la suspensión de la cuenta" {
+		t.Errorf("payload outcome/title: %v / %v", got["outcome"], got["title"])
+	}
+	if effs, _ := got["effects"].([]any); len(effs) != 1 {
+		t.Errorf("payload effects: %v", got["effects"])
 	}
 }

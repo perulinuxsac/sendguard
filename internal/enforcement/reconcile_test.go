@@ -75,10 +75,10 @@ func TestReconcileReponeBansPerdidos(t *testing.T) {
 			e := New(Config{BanSeconds: 3600, FirewallBackend: backend})
 			e.fw = f
 			ctx := context.Background()
-			if err := e.blockIPWithTTL(ctx, blockAlert("1.2.3.4", "auth_failed"), 3600); err != nil {
+			if _, err := e.blockIPWithTTL(ctx, blockAlert("1.2.3.4", "auth_failed"), 3600); err != nil {
 				t.Fatal(err)
 			}
-			if err := e.blockIPWithTTL(ctx, blockAlert("5.6.7.8", "auth_failed"), 3600); err != nil {
+			if _, err := e.blockIPWithTTL(ctx, blockAlert("5.6.7.8", "auth_failed"), 3600); err != nil {
 				t.Fatal(err)
 			}
 
@@ -102,7 +102,7 @@ func TestReconcileSinListadoNoHaceNada(t *testing.T) {
 	f := newMemFW()
 	e := New(Config{BanSeconds: 3600})
 	e.fw = f
-	_ = e.blockIPWithTTL(context.Background(), blockAlert("1.2.3.4", "x"), 3600)
+	_, _ = e.blockIPWithTTL(context.Background(), blockAlert("1.2.3.4", "x"), 3600)
 	f.blocks = nil
 	f.listErr = errors.New("firewalld no responde")
 	e.reconcileFirewall(context.Background())
@@ -157,7 +157,7 @@ func TestBlockManualPermanenteExtiendeBanTemporal(t *testing.T) {
 			e := New(Config{BanSeconds: 3600, FirewallBackend: backend})
 			e.fw = f
 			ctx := context.Background()
-			_ = e.blockIPWithTTL(ctx, blockAlert("5.6.7.8", "auth_failed"), 3600)
+			_, _ = e.blockIPWithTTL(ctx, blockAlert("5.6.7.8", "auth_failed"), 3600)
 
 			if err := e.Block(ctx, "5.6.7.8", -1); err != nil {
 				t.Fatal(err)
@@ -183,8 +183,8 @@ func TestBlockDuplicadoNoExtiende(t *testing.T) {
 	e := New(Config{BanSeconds: 3600})
 	e.fw = f
 	ctx := context.Background()
-	_ = e.blockIPWithTTL(ctx, blockAlert("5.6.7.8", "auth_failed"), 3600)
-	_ = e.blockIPWithTTL(ctx, blockAlert("5.6.7.8", "auth_failed"), 3600)
+	_, _ = e.blockIPWithTTL(ctx, blockAlert("5.6.7.8", "auth_failed"), 3600)
+	_, _ = e.blockIPWithTTL(ctx, blockAlert("5.6.7.8", "auth_failed"), 3600)
 	if len(f.blocks) != 1 || len(f.unblocks) != 0 {
 		t.Errorf("duplicado: blocks=%v unblocks=%v", f.blocks, f.unblocks)
 	}

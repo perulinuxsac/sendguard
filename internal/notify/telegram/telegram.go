@@ -1,6 +1,7 @@
 // Package telegram implementa notificaciones vía Telegram Bot API.
-// Cada alerta genera un mensaje con formato estructurado y emojis indicadores
-// de severidad para facilitar la lectura en móvil.
+// Cada alerta genera un mensaje estructurado (ver internal/notify/present) que
+// se lee de un vistazo en el móvil: resultado real, qué pasó, qué hizo el
+// agente y cómo revertirlo.
 package telegram
 
 import (
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/perulinux/sendguard/internal/detection"
+	"github.com/perulinux/sendguard/internal/notify/present"
 )
 
 // Config agrupa los parámetros necesarios para usar la Bot API de Telegram.
@@ -91,93 +93,83 @@ func (n *Notifier) Notify(ctx context.Context, alert detection.Alert) error {
 	return nil
 }
 
-// severityEmoji devuelve el emoji y etiqueta de texto según la severidad.
-func severityEmoji(s detection.Severity) string {
-	switch s {
-	case detection.SeveritySuspend:
-		return "🔴 CRÍTICO"
-	case detection.SeverityHigh:
-		return "🟠 ALTO"
-	case detection.SeverityWarn:
-		return "🟡 MEDIO"
-	default:
-		return "🔵 INFO"
-	}
-}
+// maxReasons limita las líneas de detalle para que el mensaje se lea en el móvil.
+const maxReasons = 4
 
-// actionLabel traduce la acción a texto legible. Para ActionNotifyOnly usa el
-// módulo para dar contexto específico en lugar de un genérico "Notificación".
-func actionLabel(a detection.Action, module string) string {
-	switch a {
-	case detection.ActionBlockIP:
-		return "IP bloqueada"
-	case detection.ActionSuspendAcct:
-		return "Cuenta suspendida"
-	case detection.ActionNotifyOnly:
-		return moduleNotifyLabel(module)
-	default:
-		return "Notificación"
-	}
-}
-
-// moduleNotifyLabel devuelve una etiqueta contextual según el módulo que emite
-// ActionNotifyOnly, para que el administrador identifique el tipo de problema
-// sin leer el cuerpo del mensaje.
-func moduleNotifyLabel(module string) string {
-	switch module {
-	case "queue_monitor":
-		return "Alerta de reputación"
-	case "dist_brute_force":
-		return "Fuerza bruta distribuida"
-	case "domain_discovery":
-		return "Reconocimiento de dominios"
-	case "bounce_rate":
-		return "Tasa de rebote alta"
-	case "account_takeover":
-		return "Posible robo de cuenta"
-	default:
-		return "Actividad sospechosa"
-	}
-}
-
-// formatAlert construye el texto HTML del mensaje de Telegram.
+// formatAlert construye el texto HTML del mensaje de Telegram. Estructura:
+// título según el resultado real → qué pasó → qué hizo el agente → origen →
+// qué hacer / cómo revertir.
+//
 // Los campos que provienen de los logs (cuenta, servidor, razones…) se escapan:
 // con parse_mode=HTML un "<" sin escapar hace que la Bot API rechace el mensaje
 // completo ("can't parse entities") y la notificación se perdería.
 func formatAlert(alert detection.Alert) string {
+	v := present.Build(alert)
+	esc := html.EscapeString
 	var sb strings.Builder
 
-	// Cabecera: escudo + severidad en la primera línea para lectura rápida en móvil
-	fmt.Fprintf(&sb, "🛡 <b>SendGuard</b>  %s\n", severityEmoji(alert.Severity))
-	fmt.Fprintf(&sb, "<b>%s</b>  ·  <i>%s</i>\n", actionLabel(alert.Action, alert.Module), html.EscapeString(alert.Module))
-	sb.WriteString("─────────────────────\n")
-
-	if alert.Server != "" {
-		fmt.Fprintf(&sb, "🖥 Servidor: <code>%s</code>\n", html.EscapeString(alert.Server))
+	// Título y objetivo: lo que el administrador necesita ver en la vista previa.
+	fmt.Fprintf(&sb, "%s <b>%s</b>\n", v.Icon, esc(v.Title))
+	if v.Target != "" {
+		fmt.Fprintf(&sb, "<code>%s</code>\n", esc(v.Target))
 	}
+
+	// Qué pasó
+	fmt.Fprintf(&sb, "\n<b>Qué pasó</b> · %s %s %d/100\n",
+		present.SeverityDot(alert.Severity), present.SeverityLabel(alert.Severity), alert.Score)
+	if v.What != "" {
+		fmt.Fprintf(&sb, "%s\n", esc(v.What))
+	}
+	for i, r := range alert.Reasons {
+		if i == maxReasons {
+			fmt.Fprintf(&sb, "<i>… y %d más</i>\n", len(alert.Reasons)-maxReasons)
+			break
+		}
+		fmt.Fprintf(&sb, "• <i>%s</i>\n", esc(r))
+	}
+
+	// Qué hizo el agente
+	if len(alert.Effects) > 0 {
+		sb.WriteString("\n<b>Acciones del agente</b>\n")
+		for _, e := range alert.Effects {
+			fmt.Fprintf(&sb, "%s %s\n", present.EffectIcon(e.Outcome), esc(e.Text))
+		}
+	}
+
+	// Origen
+	sb.WriteString("\n<b>Origen</b>\n")
 	if alert.IP != "" {
-		fmt.Fprintf(&sb, "🌐 IP: <code>%s</code>\n", html.EscapeString(alert.IP))
+		fmt.Fprintf(&sb, "🌐 <code>%s</code>", esc(alert.IP))
+		if alert.Country != "" {
+			fmt.Fprintf(&sb, " %s", esc(present.Country(alert.Country)))
+		}
+		sb.WriteString("\n")
 	}
-	if alert.Country != "" {
-		fmt.Fprintf(&sb, "🏳 País: <code>%s</code>\n", html.EscapeString(alert.Country))
+	if alert.Account != "" && alert.Account != v.Target {
+		fmt.Fprintf(&sb, "👤 <code>%s</code>\n", esc(alert.Account))
 	}
-	if alert.Account != "" {
-		fmt.Fprintf(&sb, "👤 Cuenta: <code>%s</code>\n", html.EscapeString(alert.Account))
+	if alert.Domain != "" && alert.Account == "" {
+		fmt.Fprintf(&sb, "📧 %s\n", esc(alert.Domain))
 	}
-	if alert.Domain != "" {
-		fmt.Fprintf(&sb, "📧 Dominio: <code>%s</code>\n", html.EscapeString(alert.Domain))
-	}
-	fmt.Fprintf(&sb, "📊 Score: <b>%d</b>/100\n", alert.Score)
-
-	if len(alert.Reasons) > 0 {
-		fmt.Fprintf(&sb, "\n📋 <i>%s</i>", html.EscapeString(strings.Join(alert.Reasons, "; ")))
-	}
-
 	ts := alert.Timestamp
 	if ts.IsZero() {
 		ts = time.Now()
 	}
-	fmt.Fprintf(&sb, "\n\n🕐 %s", ts.Format("2006-01-02 15:04:05 -07:00"))
+	var meta []string
+	if alert.Server != "" {
+		meta = append(meta, "🖥 "+esc(alert.Server))
+	}
+	meta = append(meta, "🕐 "+ts.Format("2006-01-02 15:04:05 -07:00"))
+	sb.WriteString(strings.Join(meta, " · "))
+	fmt.Fprintf(&sb, "\n<i>módulo %s</i>\n", esc(alert.Module))
 
-	return sb.String()
+	// Qué hacer
+	if v.Next != "" {
+		fmt.Fprintf(&sb, "\n👉 %s\n", esc(v.Next))
+	}
+	if v.Revert != "" {
+		fmt.Fprintf(&sb, "↩️ Revertir: <code>%s</code>\n", esc(v.Revert))
+	}
+
+	return strings.TrimRight(sb.String(), "\n")
 }
