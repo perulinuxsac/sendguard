@@ -190,7 +190,6 @@ func cmdStatus(cli *apiClient) error {
 			AlertsTotal      int64 `json:"alerts_total"`
 			BlocksTotal      int64 `json:"blocks_total"`
 			SuspensionsTotal int64 `json:"suspensions_total"`
-			RateLimitsTotal  int64 `json:"rate_limits_total"`
 		} `json:"stats"`
 	}
 	if err := cli.get("/status", &body); err != nil {
@@ -203,8 +202,7 @@ func cmdStatus(cli *apiClient) error {
 	fmt.Printf("  eventos procesados : %d\n", body.Stats.EventsTotal)
 	fmt.Printf("  alertas emitidas   : %d\n", body.Stats.AlertsTotal)
 	fmt.Printf("  IPs bloqueadas     : %d\n", body.Stats.BlocksTotal)
-	fmt.Printf("  cuentas suspendidas: %d\n", body.Stats.SuspensionsTotal)
-	fmt.Printf("  rate-limits        : %d\n\n", body.Stats.RateLimitsTotal)
+	fmt.Printf("  cuentas suspendidas: %d\n\n", body.Stats.SuspensionsTotal)
 
 	if len(body.BlockedIPs) == 0 {
 		fmt.Println("No hay IPs bloqueadas actualmente.")

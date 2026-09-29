@@ -307,8 +307,6 @@ func main() {
 		FirewallBackend:  cfg.Firewall.Backend,
 		BanSeconds:       cfg.Firewall.BanSeconds,
 		ZmprovBin:        cfg.Zimbra.ZmprovBin,
-		PostfixSbin:      cfg.Zimbra.PostfixSbin,
-		PostfixConf:      cfg.Zimbra.PostfixConf,
 		Notifier:         finalNotifier,
 		AbuseIPDB:        abuseClient,
 		AuditLog:         auditLog,

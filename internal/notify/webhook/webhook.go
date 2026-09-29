@@ -106,7 +106,7 @@ func (n *Notifier) Notify(ctx context.Context, alert detection.Alert) error {
 // formatText genera una línea de texto legible para herramientas como Slack
 // que muestran el campo "text" como mensaje principal.
 func formatText(a detection.Alert) string {
-	labels := []string{"INFO", "WARN", "RATE-LIMIT", "CRÍTICO"}
+	labels := []string{"INFO", "WARN", "ALTO", "CRÍTICO"}
 	idx := int(a.Severity)
 	if idx >= len(labels) {
 		idx = len(labels) - 1

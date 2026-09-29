@@ -96,7 +96,7 @@ func severityEmoji(s detection.Severity) string {
 	switch s {
 	case detection.SeveritySuspend:
 		return "🔴 CRÍTICO"
-	case detection.SeverityRateLimit:
+	case detection.SeverityHigh:
 		return "🟠 ALTO"
 	case detection.SeverityWarn:
 		return "🟡 MEDIO"
@@ -113,8 +113,6 @@ func actionLabel(a detection.Action, module string) string {
 		return "IP bloqueada"
 	case detection.ActionSuspendAcct:
 		return "Cuenta suspendida"
-	case detection.ActionRateLimit:
-		return "Rate-limit aplicado"
 	case detection.ActionNotifyOnly:
 		return moduleNotifyLabel(module)
 	default:

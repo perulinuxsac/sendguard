@@ -9,6 +9,40 @@ Las versiones v1.0.6 – v1.0.10 surgieron de la respuesta a un incidente de
 compromiso masivo de cuentas en `webmail.perucloud.pe` (12 jun 2026), en el
 que cuentas hackeadas enviaban spam falseando el `From` del sobre.
 
+## [1.1.0] - 2026-09-28
+
+SendGuard deja de intervenir el SMTP del servidor de correo. La contención es
+**únicamente** bloqueo de IP en firewall (ipset/ufw) y suspensión de cuenta
+(zmprov). Nada de policy service, access maps, cola ni antispam.
+
+### Eliminado
+- **`sendguard-policyd`** (binario, unit systemd, sección `policy_daemon` de
+  `agent.yaml`, `docs/postfix-policy.md`). Rechazaba en Postfix, vía
+  `check_policy_service`, las conexiones de IPs bloqueadas; el bloqueo por
+  ipset ya las corta a nivel de red.
+- **Acción `rate_limit`** (entradas `REJECT` en `sendguard_access` + `postmap`)
+  y su persistencia en SQLite (la tabla `rate_limits` se elimina al arrancar).
+  Se quita también el contador `rate_limits_total` de `/status`, `/metrics` y
+  `sendguard-ctl status`.
+- **Acción `purge_queue`** (`postsuper -d` sobre la cola).
+- La severidad 50-79 pasa a llamarse `SeverityHigh` (etiqueta `ALTO`; en el
+  webhook `RATE-LIMIT` → `ALTO`).
+
+Se conserva `GET /queue` / `sendguard-ctl queue`, que solo **lee** la cola.
+
+### Migración
+- Nuevo `deploy/remove_smtp_hooks.sh` (idempotente, con `--check`): quita de
+  las plantillas de zmconfigd, de LDAP y de `main.cf` los hooks
+  `check_policy_service inet:127.0.0.1:9100` y `check_sender_access
+  …sendguard_access`, recarga Postfix, verifica, y **solo entonces** detiene y
+  elimina `sendguard-policyd` y el access file. Si Postfix sigue apuntando al
+  policy service, falla sin detener policyd (con el hook puesto y policyd
+  caído, Postfix responde 451 a todo el correo entrante).
+- Lo ejecutan el rol de Ansible (antes de copiar binarios), `install.sh`,
+  `uninstall.sh` y el post-install de los paquetes .deb/.rpm.
+- `uninstall.sh` antes detenía policyd sin quitar el hook de Postfix; ahora
+  quita el hook primero.
+
 ## [1.0.12] - 2026-07-09
 
 Segunda tanda de correcciones de la auditoría de código interna (revisión

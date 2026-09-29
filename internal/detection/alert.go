@@ -6,12 +6,10 @@ import "time"
 type Action string
 
 const (
-	ActionBlockIP       Action = "block_ip"          // bloquear IP vía firewalld
+	ActionBlockIP       Action = "block_ip"          // bloquear IP vía firewall (ipset/ufw)
 	ActionUnblockIP     Action = "unblock_ip"        // desbloquear IP manualmente
 	ActionSuspendAcct   Action = "suspend_account"   // zmprov zimbraAccountStatus locked
 	ActionUnsuspendAcct Action = "unsuspend_account" // zmprov zimbraAccountStatus active
-	ActionRateLimit     Action = "rate_limit"        // limitar envíos vía Postfix policy
-	ActionPurgeQueue    Action = "purge_queue"       // purgar cola Postfix (infraestructura; no emitido automáticamente por ningún módulo)
 	ActionNotifyOnly    Action = "notify_only"       // solo notificar, sin contención
 )
 
@@ -19,10 +17,10 @@ const (
 type Severity int
 
 const (
-	SeverityLog       Severity = 0 // score 0-29:  solo log
-	SeverityWarn      Severity = 1 // score 30-49: notificar admin
-	SeverityRateLimit Severity = 2 // score 50-79: rate-limit + notificar
-	SeveritySuspend   Severity = 3 // score 80+:   suspender + notificación urgente
+	SeverityLog     Severity = 0 // score 0-29:  solo log
+	SeverityWarn    Severity = 1 // score 30-49: notificar admin
+	SeverityHigh    Severity = 2 // score 50-79: notificación prioritaria
+	SeveritySuspend Severity = 3 // score 80+:   suspender + notificación urgente
 )
 
 // SeverityFromScore convierte un score numérico a Severity.
@@ -31,7 +29,7 @@ func SeverityFromScore(score int) Severity {
 	case score >= 80:
 		return SeveritySuspend
 	case score >= 50:
-		return SeverityRateLimit
+		return SeverityHigh
 	case score >= 30:
 		return SeverityWarn
 	default:

@@ -1,6 +1,5 @@
 BINARY        := sendguard-agent
 BINARY_CTL    := sendguard-ctl
-BINARY_POLICYD := sendguard-policyd
 BUILD_DIR   := dist
 MODULE      := github.com/perulinux/sendguard
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -20,9 +19,9 @@ GOFLAGS := CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 NFPM        ?= nfpm
 PKG_VERSION := $(patsubst v%,%,$(VERSION))
 
-.PHONY: all build build-ctl build-policyd package deb rpm packages test lint vet clean install install-ctl help
+.PHONY: all build build-ctl package deb rpm packages test lint vet clean install install-ctl help
 
-all: build build-ctl build-policyd
+all: build build-ctl
 
 ## build: compila el agente como binario estático Linux/amd64 en dist/
 build:
@@ -35,12 +34,6 @@ build-ctl:
 	@mkdir -p $(BUILD_DIR)
 	$(GOFLAGS) go build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_CTL) ./cmd/ctl
 	@echo "Binario generado: $(BUILD_DIR)/$(BINARY_CTL)"
-
-## build-policyd: compila sendguard-policyd (daemon de políticas Postfix) en dist/
-build-policyd:
-	@mkdir -p $(BUILD_DIR)
-	$(GOFLAGS) go build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_POLICYD) ./cmd/policyd
-	@echo "Binario generado: $(BUILD_DIR)/$(BINARY_POLICYD)"
 
 ## test: ejecuta todos los tests con cobertura
 test:
@@ -60,25 +53,25 @@ lint:
 	golangci-lint run ./...
 
 ## package: compila y empaqueta todo para deploy en un tar.gz
-package: build build-ctl build-policyd
+package: build build-ctl
 	@mkdir -p $(BUILD_DIR)
 	tar -czf $(BUILD_DIR)/sendguard-$(VERSION).tar.gz \
-		-C $(BUILD_DIR) $(BINARY) $(BINARY_CTL) $(BINARY_POLICYD) \
-		-C $(CURDIR)/deploy sendguard-agent.service sendguard-policyd.service install.sh uninstall.sh test_sendguard.sh
+		-C $(BUILD_DIR) $(BINARY) $(BINARY_CTL) \
+		-C $(CURDIR)/deploy sendguard-agent.service install.sh uninstall.sh remove_smtp_hooks.sh test_sendguard.sh
 	@echo "Paquete generado: $(BUILD_DIR)/sendguard-$(VERSION).tar.gz"
 	@echo "Copiar al cliente:  scp $(BUILD_DIR)/sendguard-$(VERSION).tar.gz root@IP:/tmp/"
 	@echo "Instalar:           tar xzf sendguard-$(VERSION).tar.gz && bash install.sh"
 	@echo "Desinstalar:        bash uninstall.sh"
 
 ## deb: genera el paquete .deb en dist/ (requiere nfpm)
-deb: build build-ctl build-policyd
+deb: build build-ctl
 	@command -v $(NFPM) >/dev/null 2>&1 || { echo "nfpm no instalado. Instala con: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"; exit 1; }
 	@mkdir -p $(BUILD_DIR)
 	VERSION=$(PKG_VERSION) $(NFPM) package -f deploy/nfpm.yaml -p deb -t $(BUILD_DIR)
 	@echo "Paquete .deb generado en $(BUILD_DIR)/"
 
 ## rpm: genera el paquete .rpm en dist/ (requiere nfpm)
-rpm: build build-ctl build-policyd
+rpm: build build-ctl
 	@command -v $(NFPM) >/dev/null 2>&1 || { echo "nfpm no instalado. Instala con: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"; exit 1; }
 	@mkdir -p $(BUILD_DIR)
 	VERSION=$(PKG_VERSION) $(NFPM) package -f deploy/nfpm.yaml -p rpm -t $(BUILD_DIR)

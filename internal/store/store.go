@@ -8,7 +8,6 @@ package store
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -51,11 +50,8 @@ CREATE TABLE IF NOT EXISTS whitelist (
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
-CREATE TABLE IF NOT EXISTS rate_limits (
-    account    TEXT    PRIMARY KEY,
-    expires_at INTEGER NOT NULL,
-    created_at INTEGER NOT NULL DEFAULT (unixepoch())
-);
+-- rate_limits: tabla del rate-limit vía Postfix, retirado en v1.1.0.
+DROP TABLE IF EXISTS rate_limits;
 `
 
 // BanRecord describe un ban activo cargado desde la base de datos.
@@ -170,77 +166,6 @@ func (s *Store) PruneExpiredBans() (int64, error) {
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
-}
-
-// ── Rate-limits persistentes ─────────────────────────────────────────────────
-// La entrada REJECT de sendguard_access vive en disco, pero su expiración era
-// solo un time.AfterFunc en memoria: tras un reinicio del agente la cuenta
-// quedaba limitada para siempre. Aquí se persiste la expiración para que el
-// arranque la restaure (o limpie la entrada si ya venció).
-
-// RateLimitRecord describe un rate-limit activo persistido.
-type RateLimitRecord struct {
-	Account   string
-	ExpiresAt time.Time
-}
-
-// SaveRateLimit persiste (o extiende) la expiración del rate-limit de una cuenta.
-func (s *Store) SaveRateLimit(account string, expiresAt time.Time) error {
-	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO rate_limits (account, expires_at, created_at)
-		 VALUES (?, ?, unixepoch())`,
-		account, expiresAt.Unix(),
-	)
-	if err != nil {
-		return fmt.Errorf("store: SaveRateLimit %s: %w", account, err)
-	}
-	return nil
-}
-
-// DeleteRateLimit elimina el registro del rate-limit de una cuenta.
-func (s *Store) DeleteRateLimit(account string) error {
-	_, err := s.db.Exec(`DELETE FROM rate_limits WHERE account = ?`, account)
-	if err != nil {
-		return fmt.Errorf("store: DeleteRateLimit %s: %w", account, err)
-	}
-	return nil
-}
-
-// GetRateLimit retorna la expiración persistida del rate-limit de una cuenta.
-// El segundo valor es false si no hay registro.
-func (s *Store) GetRateLimit(account string) (time.Time, bool, error) {
-	var exp int64
-	err := s.db.QueryRow(`SELECT expires_at FROM rate_limits WHERE account = ?`, account).Scan(&exp)
-	if errors.Is(err, sql.ErrNoRows) {
-		return time.Time{}, false, nil
-	}
-	if err != nil {
-		return time.Time{}, false, fmt.Errorf("store: GetRateLimit %s: %w", account, err)
-	}
-	return time.Unix(exp, 0), true, nil
-}
-
-// LoadRateLimits retorna TODOS los rate-limits persistidos, incluidos los ya
-// vencidos: el arranque debe limpiar del access file los expirados y
-// reprogramar los vigentes.
-func (s *Store) LoadRateLimits() ([]RateLimitRecord, error) {
-	rows, err := s.db.Query(`SELECT account, expires_at FROM rate_limits`)
-	if err != nil {
-		return nil, fmt.Errorf("store: LoadRateLimits: %w", err)
-	}
-	defer rows.Close()
-
-	var records []RateLimitRecord
-	for rows.Next() {
-		var r RateLimitRecord
-		var expiresUnix int64
-		if err := rows.Scan(&r.Account, &expiresUnix); err != nil {
-			return nil, fmt.Errorf("store: scan rate limit: %w", err)
-		}
-		r.ExpiresAt = time.Unix(expiresUnix, 0)
-		records = append(records, r)
-	}
-	return records, rows.Err()
 }
 
 // ── Whitelist persistente ────────────────────────────────────────────────────

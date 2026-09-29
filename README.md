@@ -1,6 +1,6 @@
 # SendGuard Agent
 
-SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tails the mail logs in real time, detects suspicious patterns using configurable detection modules, and automatically enforces containment actions — IP blocks via `firewalld` or `ufw`, account suspensions via `zmprov`, and Postfix queue management.
+SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tails the mail logs in real time, detects suspicious patterns using configurable detection modules, and automatically enforces containment actions — IP blocks via `firewalld` or `ufw`, and account suspensions via `zmprov`. SendGuard never modifies the SMTP configuration, the mail queue, or antispam — containment is firewall + account lock only.
 
 ---
 
@@ -8,10 +8,8 @@ SendGuard Agent is a lightweight security daemon for Zimbra mail servers. It tai
 
 - **Real-time log analysis** — tail-follows `mail.log` and `mailbox.log` without polling delays
 - **11 detection modules** — each tuned with configurable thresholds and time windows
-- **Multi-OS firewall support** — `firewalld` (RHEL/CentOS/Rocky/AlmaLinux) and `ufw` (Ubuntu/Debian)
+- **Multi-OS firewall support** — `firewalld` + ipset (RHEL/CentOS/Rocky/AlmaLinux) and `ufw` (Ubuntu/Debian)
 - **Account suspension** — locks compromised Zimbra accounts via `zmprov`
-- **Postfix rate-limiting and queue purging** — throttles sending or deletes queued spam per domain
-- **Postfix policy daemon** — `sendguard-policyd` rejects connections from blocked IPs at SMTP time via `check_policy_service`
 - **GeoIP intelligence** — restricts logins to allowed countries via [ipinfo.io](https://ipinfo.io)
 - **AbuseIPDB enrichment** — annotates blocks with reputation scores
 - **Telegram, webhook and email notifications** — instant alerts on block/suspend actions
@@ -185,7 +183,6 @@ mail.log ──┐
 mailbox.log ┘                                    (modules)              │
                                                                         ├── firewall (block IP)
                                                                         ├── zmprov  (suspend account)
-                                                                        ├── postfix (rate-limit)
                                                                         ├── notifier (Telegram / webhook)
                                                                         ├── audit log (NDJSON)
                                                                         └── forwarder ──► Controller
@@ -207,10 +204,10 @@ The agent exposes an HTTP API on `127.0.0.1:9099` (configurable). Protected endp
 | `GET` | `/status` | Blocked IPs, enforcement counters, uptime |
 | `GET` | `/metrics` | Prometheus text format |
 | `GET` | `/urban/{ip}` | IP intelligence: GeoIP + AbuseIPDB |
-| `GET` | `/queue` | Current Postfix mail queue |
+| `GET` | `/queue` | Current Postfix mail queue (read-only) |
 | `GET` | `/domains` | Domains with accumulated alerts |
 | `GET` | `/whitelist` | Current whitelist contents |
-| `GET` | `/blocked/{ip}` | O(1) check whether an IP is currently blocked (used by `sendguard-policyd`) |
+| `GET` | `/blocked/{ip}` | O(1) check whether an IP is currently blocked |
 
 ### Protected endpoints
 
@@ -294,7 +291,7 @@ See [INSTALL.md](INSTALL.md) for full installation details and configuration ref
 # Clone and build
 git clone https://github.com/perulinux/sendguard
 cd sendguard
-make build build-ctl build-policyd  # produces dist/sendguard-agent, dist/sendguard-ctl, dist/sendguard-policyd
+make build build-ctl     # produces dist/sendguard-agent, dist/sendguard-ctl
 make package             # creates dist/sendguard-<version>.tar.gz with service + install.sh
 make test                # run test suite
 make lint                # run golangci-lint

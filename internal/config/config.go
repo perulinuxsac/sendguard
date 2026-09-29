@@ -22,21 +22,15 @@ type Config struct {
 	// ProxyCIDRs: rangos de proxies cloud legítimos (Microsoft, Google, Apple…).
 	// Los eventos de estas IPs no activan módulos IP-céntricos (auth_failed, rcpt_flood)
 	// pero sí los de cuenta (sasl_connections, impossible_traveler).
-	ProxyCIDRs   []string         `yaml:"proxy_cidrs"`
-	Notification NotifyConf       `yaml:"notification"`
-	API          APIConf          `yaml:"api"`
-	DailyReport  DailyReportConf  `yaml:"daily_report"`
-	PolicyDaemon PolicyDaemonConf `yaml:"policy_daemon"`
+	ProxyCIDRs   []string        `yaml:"proxy_cidrs"`
+	Notification NotifyConf      `yaml:"notification"`
+	API          APIConf         `yaml:"api"`
+	DailyReport  DailyReportConf `yaml:"daily_report"`
 }
 
 // DailyReportConf configura el envío del resumen diario por email.
 type DailyReportConf struct {
 	Hour int `yaml:"hour"` // hora UTC en que se envía (0-23, default 8)
-}
-
-// PolicyDaemonConf configura el daemon de políticas Postfix.
-type PolicyDaemonConf struct {
-	Listen string `yaml:"listen"` // ej: "127.0.0.1:9100" — vacío deshabilita el daemon
 }
 
 // ControllerConf configura la sincronización con el Controller central (Fase 3).
@@ -56,7 +50,7 @@ type APIConf struct {
 type ZimbraConf struct {
 	Logs        LogPaths `yaml:"logs"`
 	ZmprovBin   string   `yaml:"zmprov_bin"`   // ruta completa a zmprov (default: /opt/zimbra/bin/zmprov)
-	PostfixSbin string   `yaml:"postfix_sbin"` // dir de binarios de Postfix de Zimbra
+	PostfixSbin string   `yaml:"postfix_sbin"` // dir de binarios de Postfix de Zimbra (solo lectura de cola)
 	PostfixConf string   `yaml:"postfix_conf"` // dir de configuración de Postfix de Zimbra
 }
 
@@ -173,7 +167,7 @@ type NotifyConf struct {
 	CooldownSeconds int          `yaml:"cooldown_seconds"` // cooldown por IP/cuenta (0 = deshabilitado)
 	MaxPerMinute    int          `yaml:"max_per_minute"`   // límite global por minuto (0 = deshabilitado)
 	// OnActions filtra las notificaciones push (Telegram/email/webhook) por acción.
-	// Si está vacío se notifica todo. Valores activos: block_ip | suspend_account | rate_limit | notify_only
+	// Si está vacío se notifica todo. Valores activos: block_ip | suspend_account | notify_only
 	OnActions []string `yaml:"on_actions"`
 }
 

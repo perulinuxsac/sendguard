@@ -5,8 +5,16 @@ servidores **Zimbra** (Rocky/RHEL con firewalld o Ubuntu/Debian con ufw).
 
 Hace lo mismo que `deploy/install.sh` pero desatendido y repetible: copia los
 binarios, descarga la DB GeoIP MaxMind (+ cron de actualización), genera
-`/etc/sendguard/agent.yaml`, instala los servicios systemd `sendguard-agent` y
-`sendguard-policyd`, y los habilita y arranca.
+`/etc/sendguard/agent.yaml`, instala el servicio systemd `sendguard-agent` y lo
+habilita y arranca.
+
+SendGuard **no interviene el SMTP**: no toca la configuración de Postfix, la cola
+ni el antispam. La contención es solo firewall (ipset/ufw) y suspensión de
+cuenta (zmprov). En hosts con versiones < 1.1.0 el rol ejecuta
+`deploy/remove_smtp_hooks.sh`, que quita de Postfix el
+`check_policy_service inet:127.0.0.1:9100` y el `sendguard_access`, recarga
+Postfix, verifica y **recién entonces** detiene y elimina `sendguard-policyd`.
+Si no puede quitar el hook, falla sin detener policyd, para no cortar el correo.
 
 ## Requisitos
 
@@ -16,7 +24,7 @@ binarios, descarga la DB GeoIP MaxMind (+ cron de actualización), genera
 - Binarios compilados en `dist/` del repo: ejecuta en la raíz del repo
 
   ```bash
-  make package      # compila agent, ctl y policyd → dist/
+  make package      # compila agent y ctl → dist/
   ```
 
 ## Estructura
@@ -82,8 +90,8 @@ deploy/ansible/
 El rol incluye **dos niveles**:
 
 - **Smoke-check (automático, seguro)** — corre al final de cada despliegue. No
-  modifica nada: confirma que `sendguard-agent` y `sendguard-policyd` están
-  activos, reporta la versión instalada y sondea el endpoint `GET /health` de la
+  modifica nada: confirma que `sendguard-agent` está activo y que
+  Postfix no referencia a SendGuard (`postconf -n`), reporta la versión instalada y sondea el endpoint `GET /health` de la
   API. Si algo falla, el playbook falla.
 
 - **Self-test integral (opt-in, intrusivo)** — ejecuta `deploy/test_sendguard.sh`
@@ -105,13 +113,13 @@ El rol incluye **dos niveles**:
 
 - **Actualizar a una versión nueva**: `make package` en el repo y vuelve a
   ejecutar el playbook. Al cambiar el binario o la config, los handlers reinician
-  `sendguard-agent` y `sendguard-policyd` automáticamente.
+  `sendguard-agent` automáticamente.
 - **Cambiar un umbral o whitelist**: edita group_vars/host_vars y re-ejecuta; solo
   se reescribe `agent.yaml` (con backup) y se reinician los servicios.
 - **Verificar un host**:
 
   ```bash
-  ansible sendguard -a 'systemctl is-active sendguard-agent sendguard-policyd' --become
+  ansible sendguard -a 'systemctl is-active sendguard-agent' --become
   ```
 
 ## Notas

@@ -128,7 +128,7 @@ MAILBOX_LOG=""
 # ── Binarios ──────────────────────────────────────────────────────────────────
 section "── Instalación de binarios"
 
-for bin in sendguard-agent sendguard-ctl sendguard-policyd; do
+for bin in sendguard-agent sendguard-ctl; do
     dst="/usr/local/bin/$bin"
     # Buscar en: mismo dir (tar.gz plano) → ../dist/ (repo dev) → ya instalado
     if [[ -f "$SCRIPT_DIR/$bin" ]]; then
@@ -140,9 +140,21 @@ for bin in sendguard-agent sendguard-ctl sendguard-policyd; do
     elif [[ -f "$dst" ]]; then
         ok "$dst ya presente"
     else
-        die "Binario no encontrado: compila primero con 'make build build-ctl build-policyd'"
+        die "Binario no encontrado: compila primero con 'make build build-ctl'"
     fi
 done
+
+# ── Retiro de la integración SMTP heredada ────────────────────────────────────
+# SendGuard ya no interviene el SMTP (solo firewall + suspensión de cuenta).
+# En upgrades desde <1.1.0 quita check_policy_service/sendguard_access de
+# Postfix y recién después retira sendguard-policyd. Va antes de reescribir
+# agent.yaml porque lee de ahí el puerto del policyd.
+section "── Retiro de integración SMTP heredada"
+install -D -m 755 "$SCRIPT_DIR/remove_smtp_hooks.sh" /usr/local/lib/sendguard/remove_smtp_hooks.sh
+if ! /usr/local/lib/sendguard/remove_smtp_hooks.sh; then
+    die "No se pudo retirar el hook de SendGuard en Postfix (policyd se dejó corriendo). Revisa 'postconf -n' y reintenta."
+fi
+ok "Postfix sin hooks de SendGuard"
 
 # ── Leer config existente (para usarla como defaults en upgrade) ───────────────
 # Extrae el valor escalar de una clave YAML simple: "key: value"
@@ -491,9 +503,6 @@ notification:
 daily_report:
   hour: 8
 
-policy_daemon:
-  listen: "127.0.0.1:9100"
-
 whitelist:
   accounts:${ACCTS_YAML}
   ips:${IPS_YAML}
@@ -513,13 +522,9 @@ section "── Servicio systemd"
 install -m 644 "$SCRIPT_DIR/sendguard-agent.service" "$SERVICE_FILE"
 ok "Servicio agent instalado en $SERVICE_FILE"
 
-POLICYD_SERVICE="/etc/systemd/system/sendguard-policyd.service"
-install -m 644 "$SCRIPT_DIR/sendguard-policyd.service" "$POLICYD_SERVICE"
-ok "Servicio policyd instalado en $POLICYD_SERVICE"
-
 systemctl daemon-reload
-systemctl enable sendguard-agent sendguard-policyd
-ok "sendguard-agent y sendguard-policyd habilitados para arrancar con el sistema"
+systemctl enable sendguard-agent
+ok "sendguard-agent habilitado para arrancar con el sistema"
 
 if systemctl is-active --quiet sendguard-agent; then
     systemctl restart sendguard-agent
@@ -527,14 +532,6 @@ if systemctl is-active --quiet sendguard-agent; then
 else
     systemctl start sendguard-agent
     ok "sendguard-agent iniciado"
-fi
-
-if systemctl is-active --quiet sendguard-policyd; then
-    systemctl restart sendguard-policyd
-    ok "sendguard-policyd reiniciado"
-else
-    systemctl start sendguard-policyd
-    ok "sendguard-policyd iniciado"
 fi
 
 # ── Verificación ──────────────────────────────────────────────────────────────
@@ -547,12 +544,6 @@ if systemctl is-active --quiet sendguard-agent; then
 else
     warn "El servicio no arrancó — revisa: journalctl -u sendguard-agent -n 30"
     exit 1
-fi
-
-if systemctl is-active --quiet sendguard-policyd; then
-    ok "sendguard-policyd está corriendo en 127.0.0.1:9100"
-else
-    warn "sendguard-policyd no arrancó — revisa: journalctl -u sendguard-policyd -n 30"
 fi
 
 if $BIN_CTL -addr "http://$API_ADDR" status &>/dev/null; then

@@ -40,7 +40,7 @@ func sampleViews() (fakeEnforcer, fakeEngine) {
 		suspended: []enforcement.SuspendedAcctInfo{
 			{Account: "victim@dominio.com", Module: "rcpt_flood", Timestamp: now},
 		},
-		stats: enforcement.EnforcerStats{BlocksTotal: 12, SuspensionsTotal: 3, RateLimitsTotal: 1},
+		stats: enforcement.EnforcerStats{BlocksTotal: 12, SuspensionsTotal: 3},
 	}
 	eng := fakeEngine{
 		events: 5000,

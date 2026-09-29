@@ -47,8 +47,6 @@ type Config struct {
 	FirewallBackend  string            // "firewalld" (RHEL) o "ufw" (Ubuntu); default: firewalld
 	BanSeconds       int               // duración del bloqueo de IP (0 = permanente)
 	ZmprovBin        string            // ruta completa a zmprov (default: /opt/zimbra/bin/zmprov)
-	PostfixSbin      string            // /opt/zimbra/common/sbin — binarios de Postfix de Zimbra
-	PostfixConf      string            // /opt/zimbra/common/conf — config de Postfix de Zimbra
 	Notifier         notify.Notifier   // nil usa Noop (sin notificaciones)
 	AbuseIPDB        *abuseipdb.Client // nil deshabilita la consulta de reputación
 	AuditLog         *audit.Logger     // nil deshabilita el audit log
@@ -59,11 +57,11 @@ type Config struct {
 	AllowedCountries []string          // IPs de estos países no se bloquean en firewall (solo notificación)
 	UserNotifier     UserNotifier      // nil deshabilita el aviso al usuario suspendido
 	// NotifyOnActions filtra las notificaciones push (Telegram/email/webhook) por acción.
-	// Si está vacío se notifica todo. Valores activos: block_ip | suspend_account | rate_limit | notify_only
+	// Si está vacío se notifica todo. Valores activos: block_ip | suspend_account | notify_only
 	NotifyOnActions []string // vacío = notificar todo
 }
 
-// actionTimeout acota cada comando externo (firewall-cmd, zmprov, postmap…)
+// actionTimeout acota cada comando externo (firewall-cmd, ipset, zmprov…)
 // del path automático de alertas. handle() corre en un único goroutine: sin
 // límite, un comando colgado congela toda la contención para siempre (alertCh
 // se llena y las alertas siguientes se descartan). 2 min cubre con holgura los
@@ -110,7 +108,6 @@ type SuspendedAcctInfo struct {
 type EnforcerStats struct {
 	BlocksTotal      int64
 	SuspensionsTotal int64
-	RateLimitsTotal  int64
 }
 
 // Enforcer recibe alertas del Engine y ejecuta acciones de contención.
@@ -124,7 +121,6 @@ type Enforcer struct {
 	suspendedAccts map[string]suspendedAcct
 	blocksTotal    atomic.Int64
 	suspsTotal     atomic.Int64
-	ratesTotal     atomic.Int64
 }
 
 // New crea un Enforcer con la configuración dada.
@@ -239,60 +235,11 @@ func (e *Enforcer) handle(ctx context.Context, alert detection.Alert) {
 		}
 		e.suspendAccount(ctx, alert)
 
-	case detection.ActionRateLimit:
-		if alert.Account == "" {
-			slog.Warn("enforcement: rate_limit sin cuenta, ignorando")
-			return
-		}
-		if e.isIPFromAllowedCountry(alert.IP) {
-			country := e.cfg.GeoResolver.Country(alert.IP)
-			slog.Info("enforcement: IP de país permitido, rate-limit omitido",
-				"ip", alert.IP, "country", country, "account", alert.Account, "module", alert.Module)
-			break
-		}
-		if e.cfg.PostfixSbin == "" || e.cfg.PostfixConf == "" {
-			// break (no return): la alerta sigue registrándose en Forwarder/AuditLog,
-			// igual que los fallos de block/suspend.
-			slog.Warn("enforcement: rate_limit sin postfix_sbin/postfix_conf configurados, omitiendo")
-			alert.Reasons = append(alert.Reasons, "⚠ rate-limit omitido: postfix_sbin/postfix_conf sin configurar")
-			break
-		}
-		if err := e.applyRateLimit(ctx, alert.Account); err != nil {
-			slog.Error("enforcement: fallo al aplicar rate-limit",
-				"account", alert.Account, "error", err)
-			alert.Reasons = append(alert.Reasons, fmt.Sprintf("⚠ fallo rate-limit: %v", err))
-		} else {
-			e.ratesTotal.Add(1)
-			slog.Info("enforcement: rate-limit aplicado",
-				"account", alert.Account, "ban_seconds", e.cfg.BanSeconds, "module", alert.Module)
-		}
-
-	case detection.ActionPurgeQueue:
-		domain := alert.Domain
-		if domain == "" {
-			slog.Warn("enforcement: purge_queue sin dominio, ignorando")
-			return
-		}
-		if e.cfg.PostfixSbin == "" || e.cfg.PostfixConf == "" {
-			slog.Warn("enforcement: purge_queue sin postfix_sbin/postfix_conf configurados, omitiendo")
-			alert.Reasons = append(alert.Reasons, "⚠ purga de cola omitida: postfix_sbin/postfix_conf sin configurar")
-			break
-		}
-		purgeCtx, cancel := actionCtx(ctx)
-		n, err := purgeQueueDomain(purgeCtx, domain, e.cfg.PostfixSbin, e.cfg.PostfixConf)
-		cancel()
-		if err != nil {
-			slog.Error("enforcement: fallo al purgar cola", "domain", domain, "error", err)
-			alert.Reasons = append(alert.Reasons, fmt.Sprintf("⚠ fallo al purgar cola: %v", err))
-		} else {
-			slog.Info("enforcement: cola purgada", "domain", domain, "deleted", n, "module", alert.Module)
-		}
-
 	case detection.ActionNotifyOnly:
 		slog.Info("enforcement: notify_only — sin acción de contención")
 	}
 
-	// País permitido: la contención (bloqueo/suspensión/rate-limit) fue omitida
+	// País permitido: la contención (bloqueo/suspensión) fue omitida
 	// en el método correspondiente, pero la alerta se registra y SE NOTIFICA:
 	// un atacante operando desde una IP nacional (o un VPS/VPN local) no debe
 	// pasar desapercibido. La marca deja claro que hace falta revisión manual.
@@ -372,7 +319,7 @@ func (e *Enforcer) blockIPWithTTL(ctx context.Context, alert detection.Alert, ba
 
 	// País permitido: no se bloquea en el firewall, no se persiste en SQLite y NO
 	// se registra en el mapa de bloqueados — de lo contrario IsBlocked() devolvería
-	// true y el policy daemon rechazaría las conexiones SMTP de esta IP pese a que
+	// true (GET /blocked/{ip}, sendguard-ctl) para esta IP pese a que
 	// el bloqueo se omitió deliberadamente. La notificación sigue su curso desde
 	// handle(). Los módulos vacían su ventana al alertar, así que el re-logueo de
 	// esta línea queda acotado a un ciclo de umbral por IP, no por evento.
@@ -536,100 +483,11 @@ func (e *Enforcer) unblockWithTimeout(ctx context.Context, ip string) error {
 	return e.fw.Unblock(ctx, ip)
 }
 
-// applyRateLimit aplica el REJECT en el access file, persiste la expiración en
-// SQLite y programa la eliminación. La persistencia es lo que evita que un
-// reinicio del agente deje a la cuenta limitada para siempre (la entrada del
-// access file sobrevive en disco; el AfterFunc no).
-func (e *Enforcer) applyRateLimit(ctx context.Context, account string) error {
-	rlCtx, cancel := actionCtx(ctx)
-	err := rateLimit(rlCtx, account, e.cfg.PostfixSbin, e.cfg.PostfixConf)
-	cancel()
-	if err != nil {
-		return err
-	}
-	e.scheduleRateLimitExpiry(account, e.cfg.BanSeconds)
-	return nil
-}
-
-// scheduleRateLimitExpiry persiste y programa la expiración del rate-limit.
-// banSecs <= 0 significa permanente: no hay nada que programar ni persistir
-// (la entrada del access file ya sobrevive sola en disco).
-func (e *Enforcer) scheduleRateLimitExpiry(account string, banSecs int) {
-	if banSecs <= 0 {
-		return
-	}
-	expiry := time.Now().Add(time.Duration(banSecs) * time.Second)
-	if e.cfg.Store != nil {
-		if err := e.cfg.Store.SaveRateLimit(account, expiry); err != nil {
-			slog.Warn("enforcement: no se pudo persistir rate-limit", "account", account, "error", err)
-		}
-	}
-	time.AfterFunc(time.Until(expiry), func() { e.expireRateLimit(account) })
-}
-
-// expireRateLimit limpia la entrada del access file y, solo si la limpieza tuvo
-// éxito, elimina el registro persistido — si falla, el registro queda y el
-// próximo arranque del agente reintenta la limpieza.
-//
-// Si la expiración persistida aún está vigente, este timer es obsoleto: una
-// alerta posterior extendió el rate-limit (SaveRateLimit reemplaza la fila) y
-// programó su propio AfterFunc, que hará la limpieza a su hora. Sin este
-// chequeo, el timer original limpiaba el REJECT antes de tiempo.
-func (e *Enforcer) expireRateLimit(account string) {
-	if e.cfg.Store != nil {
-		exp, ok, err := e.cfg.Store.GetRateLimit(account)
-		if err != nil {
-			slog.Warn("enforcement: no se pudo consultar rate-limit persistido", "account", account, "error", err)
-		} else if ok && exp.After(time.Now()) {
-			return
-		}
-	}
-	if err := removeRateLimit(account, e.cfg.PostfixSbin, e.cfg.PostfixConf); err != nil {
-		slog.Warn("enforcement: fallo al limpiar rate-limit expirado (se reintentará al reiniciar)",
-			"account", account, "error", err)
-		return
-	}
-	if e.cfg.Store != nil {
-		if err := e.cfg.Store.DeleteRateLimit(account); err != nil {
-			slog.Warn("enforcement: no se pudo eliminar rate-limit persistido", "account", account, "error", err)
-		}
-	}
-}
-
-// restoreRateLimits reprograma al arrancar las expiraciones de rate-limit
-// persistidas: limpia inmediatamente las ya vencidas y agenda las vigentes.
-func (e *Enforcer) restoreRateLimits() {
-	if e.cfg.Store == nil {
-		return
-	}
-	records, err := e.cfg.Store.LoadRateLimits()
-	if err != nil {
-		slog.Warn("enforcement: no se pudo leer rate-limits persistidos", "error", err)
-		return
-	}
-	now := time.Now()
-	restored, expired := 0, 0
-	for _, r := range records {
-		if r.ExpiresAt.After(now) {
-			acct := r.Account
-			time.AfterFunc(r.ExpiresAt.Sub(now), func() { e.expireRateLimit(acct) })
-			restored++
-		} else {
-			e.expireRateLimit(r.Account)
-			expired++
-		}
-	}
-	if restored > 0 || expired > 0 {
-		slog.Info("enforcement: rate-limits restaurados desde SQLite",
-			"vigentes", restored, "expirados_limpiados", expired)
-	}
-}
-
 // isContainmentAction retorna true para las acciones que ejecutan contención
 // sobre el servidor (y que por tanto pueden haberse omitido por país permitido).
 func isContainmentAction(a detection.Action) bool {
 	switch a {
-	case detection.ActionBlockIP, detection.ActionSuspendAcct, detection.ActionRateLimit:
+	case detection.ActionBlockIP, detection.ActionSuspendAcct:
 		return true
 	}
 	return false
@@ -785,7 +643,6 @@ func (e *Enforcer) Stats() EnforcerStats {
 	return EnforcerStats{
 		BlocksTotal:      e.blocksTotal.Load(),
 		SuspensionsTotal: e.suspsTotal.Load(),
-		RateLimitsTotal:  e.ratesTotal.Load(),
 	}
 }
 
@@ -815,11 +672,6 @@ func (e *Enforcer) LoadExistingBans(ctx context.Context) {
 			slog.Error("enforcement: fallo al inicializar el backend de firewall", "error", err)
 		}
 	}
-
-	// Restaurar también las expiraciones de rate-limit persistidas: las entradas
-	// REJECT de sendguard_access sobreviven en disco y sin esto quedarían
-	// permanentes tras un reinicio del agente.
-	e.restoreRateLimits()
 
 	if e.cfg.Store != nil {
 		if _, ok := e.loadBansFromStore(); ok {

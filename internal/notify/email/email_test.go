@@ -135,10 +135,10 @@ func TestFormatSubjectFallback(t *testing.T) {
 
 func TestSeverityLabels(t *testing.T) {
 	cases := map[detection.Severity]string{
-		detection.SeveritySuspend:   "CRÍTICO",
-		detection.SeverityRateLimit: "ALTO",
-		detection.SeverityWarn:      "MEDIO",
-		detection.SeverityLog:       "INFO",
+		detection.SeveritySuspend: "CRÍTICO",
+		detection.SeverityHigh:    "ALTO",
+		detection.SeverityWarn:    "MEDIO",
+		detection.SeverityLog:     "INFO",
 	}
 	for sev, want := range cases {
 		if got := severityLabel(sev); got != want {
@@ -154,7 +154,7 @@ func TestSeverityLabels(t *testing.T) {
 func TestActionLabelAndIcon(t *testing.T) {
 	actions := []detection.Action{
 		detection.ActionBlockIP, detection.ActionSuspendAcct, detection.ActionUnsuspendAcct,
-		detection.ActionRateLimit, detection.ActionNotifyOnly, detection.ActionPurgeQueue,
+		detection.ActionNotifyOnly,
 	}
 	for _, a := range actions {
 		if actionLabel(a, "") == "" {

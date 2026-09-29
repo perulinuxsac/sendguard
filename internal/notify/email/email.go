@@ -277,7 +277,7 @@ func severityLabel(s detection.Severity) string {
 	switch s {
 	case detection.SeveritySuspend:
 		return "CRÍTICO"
-	case detection.SeverityRateLimit:
+	case detection.SeverityHigh:
 		return "ALTO"
 	case detection.SeverityWarn:
 		return "MEDIO"
@@ -290,7 +290,7 @@ func severityColor(s detection.Severity) string {
 	switch s {
 	case detection.SeveritySuspend:
 		return "#dc2626"
-	case detection.SeverityRateLimit:
+	case detection.SeverityHigh:
 		return "#ea580c"
 	case detection.SeverityWarn:
 		return "#d97706"
@@ -303,7 +303,7 @@ func severityBg(s detection.Severity) string {
 	switch s {
 	case detection.SeveritySuspend:
 		return "#fef2f2"
-	case detection.SeverityRateLimit:
+	case detection.SeverityHigh:
 		return "#fff7ed"
 	case detection.SeverityWarn:
 		return "#fffbeb"
@@ -316,7 +316,7 @@ func headerColor(s detection.Severity) string {
 	switch s {
 	case detection.SeveritySuspend:
 		return "#991b1b"
-	case detection.SeverityRateLimit:
+	case detection.SeverityHigh:
 		return "#9a3412"
 	case detection.SeverityWarn:
 		return "#92400e"
@@ -335,8 +335,6 @@ func actionIcon(a detection.Action, module string) string {
 		return "&#x1F512;"
 	case detection.ActionUnsuspendAcct:
 		return "&#x1F513;"
-	case detection.ActionRateLimit:
-		return "&#x23F3;"
 	case detection.ActionNotifyOnly:
 		switch module {
 		case "queue_monitor", "bounce_rate":
@@ -361,8 +359,6 @@ func actionLabel(a detection.Action, module string) string {
 		return "Cuenta suspendida"
 	case detection.ActionUnsuspendAcct:
 		return "Cuenta rehabilitada"
-	case detection.ActionRateLimit:
-		return "Rate-limit aplicado"
 	case detection.ActionNotifyOnly:
 		return moduleNotifyLabel(module)
 	default:

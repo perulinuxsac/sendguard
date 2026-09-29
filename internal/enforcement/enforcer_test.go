@@ -262,7 +262,7 @@ func TestBlockedIPsInfoCompleta(t *testing.T) {
 func TestStatsContadoresIniciales(t *testing.T) {
 	e := New(Config{})
 	s := e.Stats()
-	if s.BlocksTotal != 0 || s.SuspensionsTotal != 0 || s.RateLimitsTotal != 0 {
+	if s.BlocksTotal != 0 || s.SuspensionsTotal != 0 {
 		t.Errorf("contadores deben ser 0 al inicio: %+v", s)
 	}
 }
@@ -271,7 +271,6 @@ func TestStatsContadoresActomicos(t *testing.T) {
 	e := New(Config{})
 	e.blocksTotal.Add(3)
 	e.suspsTotal.Add(1)
-	e.ratesTotal.Add(2)
 
 	s := e.Stats()
 	if s.BlocksTotal != 3 {
@@ -279,9 +278,6 @@ func TestStatsContadoresActomicos(t *testing.T) {
 	}
 	if s.SuspensionsTotal != 1 {
 		t.Errorf("SuspensionsTotal: got %d, want 1", s.SuspensionsTotal)
-	}
-	if s.RateLimitsTotal != 2 {
-		t.Errorf("RateLimitsTotal: got %d, want 2", s.RateLimitsTotal)
 	}
 }
 

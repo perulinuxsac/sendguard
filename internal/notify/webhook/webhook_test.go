@@ -174,7 +174,7 @@ func TestFormatTextSeverityLabels(t *testing.T) {
 	}{
 		{detection.SeverityLog, "INFO"},
 		{detection.SeverityWarn, "WARN"},
-		{detection.SeverityRateLimit, "RATE-LIMIT"},
+		{detection.SeverityHigh, "ALTO"},
 		{detection.SeveritySuspend, "CRÍTICO"},
 	}
 	for _, c := range casos {

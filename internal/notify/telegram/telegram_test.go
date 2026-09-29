@@ -223,7 +223,7 @@ func TestFormatoSeveridadAlta(t *testing.T) {
 	n := telegram.NewForTest(cfg, srv.URL)
 
 	alert := sampleAlert()
-	alert.Severity = detection.SeverityRateLimit
+	alert.Severity = detection.SeverityHigh
 	n.Notify(context.Background(), alert)
 
 	if !strings.Contains(capturedText, "🟠") {
@@ -250,8 +250,8 @@ func TestFormatoSinCamposOpcionales(t *testing.T) {
 	alert := detection.Alert{
 		Module:   "queue_monitor",
 		Score:    70,
-		Severity: detection.SeverityRateLimit,
-		Action:   detection.ActionPurgeQueue,
+		Severity: detection.SeverityHigh,
+		Action:   detection.ActionNotifyOnly,
 	}
 	if err := n.Notify(context.Background(), alert); err != nil {
 		t.Fatalf("Notify: %v", err)

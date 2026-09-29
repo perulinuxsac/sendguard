@@ -10,7 +10,6 @@
   loop:
     - sendguard-agent
     - sendguard-ctl
-    - sendguard-policyd
   register: sg_bin_local
   delegate_to: localhost
   become: false
@@ -19,7 +18,7 @@
   ansible.builtin.fail:
     msg: >-
       Falta {{ item.item }} en {{ sendguard_dist_dir }}.
-      Compila primero con `make package` (o build/build-ctl/build-policyd) en la raíz del repo.
+      Compila primero con `make package` (o build/build-ctl) en la raíz del repo.
   loop: "{{ sg_bin_local.results }}"
   loop_control:
     label: "{{ item.item }}"
@@ -35,6 +34,31 @@
   loop:
     - "{{ sendguard_config_dir }}"
     - "{{ sendguard_db_dir }}"
+    - /usr/local/lib/sendguard
+
+# SendGuard ya no interviene el SMTP: la contención es solo firewall (ipset/ufw)
+# + suspensión de cuenta. En hosts con versiones <1.1.0 hay que quitar de
+# Postfix check_policy_service (policyd) y sendguard_access (rate-limit) ANTES
+# de retirar policyd: con el hook puesto y policyd caído, Postfix responde 451
+# a todo el correo. El script hace ambos pasos en ese orden y es idempotente.
+# Corre antes de regenerar agent.yaml porque lee de ahí el puerto del policyd.
+- name: Instalar script de retiro de integración SMTP
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../remove_smtp_hooks.sh"
+    dest: /usr/local/lib/sendguard/remove_smtp_hooks.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Retirar hooks SMTP de SendGuard en Postfix y sendguard-policyd
+  ansible.builtin.command: /usr/local/lib/sendguard/remove_smtp_hooks.sh
+  register: sg_smtp_hooks
+  changed_when: "'CHANGED' in sg_smtp_hooks.stdout"
+
+- name: Detalle del retiro de hooks SMTP
+  ansible.builtin.debug:
+    var: sg_smtp_hooks.stdout_lines
+  when: sg_smtp_hooks is changed
 
 - name: Copiar binarios a {{ sendguard_bin_dir }}
   ansible.builtin.copy:
@@ -46,10 +70,8 @@
   loop:
     - sendguard-agent
     - sendguard-ctl
-    - sendguard-policyd
   notify:
     - Restart sendguard-agent
-    - Restart sendguard-policyd
 
 - name: Instalar/actualizar la DB GeoIP MaxMind
   ansible.builtin.import_tasks: maxmind.yml
@@ -105,35 +127,27 @@
     backup: true
   notify:
     - Restart sendguard-agent
-    - Restart sendguard-policyd
 
-- name: Instalar units de systemd
+- name: Instalar unit de systemd
   ansible.builtin.template:
-    src: "{{ item }}.j2"
-    dest: "/etc/systemd/system/{{ item }}"
+    src: sendguard-agent.service.j2
+    dest: /etc/systemd/system/sendguard-agent.service
     owner: root
     group: root
     mode: "0644"
-  loop:
-    - sendguard-agent.service
-    - sendguard-policyd.service
   notify:
     - Reload systemd
     - Restart sendguard-agent
-    - Restart sendguard-policyd
 
 - name: Forzar handlers pendientes antes de habilitar servicios
   ansible.builtin.meta: flush_handlers
 
-- name: Habilitar y arrancar sendguard-agent y sendguard-policyd
+- name: Habilitar y arrancar sendguard-agent
   ansible.builtin.systemd:
-    name: "{{ item }}"
+    name: sendguard-agent
     enabled: true
     state: started
     daemon_reload: true
-  loop:
-    - sendguard-agent
-    - sendguard-policyd
 
 - name: Verificación post-deploy (segura, no intrusiva)
   ansible.builtin.import_tasks: verify.yml

@@ -58,8 +58,8 @@ func TestExactThreshold(t *testing.T) {
 	if a.Score != 75 {
 		t.Errorf("Score: got %d, want 75", a.Score)
 	}
-	if a.Severity != detection.SeverityRateLimit {
-		t.Errorf("Severity: got %d, want SeverityRateLimit(%d)", a.Severity, detection.SeverityRateLimit)
+	if a.Severity != detection.SeverityHigh {
+		t.Errorf("Severity: got %d, want SeverityHigh(%d)", a.Severity, detection.SeverityHigh)
 	}
 	if a.Module != "domain_discovery" {
 		t.Errorf("Module: got %q, want %q", a.Module, "domain_discovery")

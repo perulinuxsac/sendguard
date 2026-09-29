@@ -10,7 +10,7 @@ sendguard_server_id: "{{ inventory_hostname }}"
 sendguard_client_name: ""          # OBLIGATORIO: nombre del cliente
 
 # ── Artefactos (binarios ya compilados) ──────────────────────────────────────
-# Ejecuta `make package` (o build/build-ctl/build-policyd) en la raíz del repo
+# Ejecuta `make package` (o build/build-ctl) en la raíz del repo
 # antes de desplegar; los binarios quedan en dist/ y el rol los copia desde ahí.
 sendguard_dist_dir: "{{ playbook_dir }}/../../dist"
 # Script del self-test intrusivo (solo se usa con --tags selftest).
@@ -76,7 +76,6 @@ sendguard_api_listen: "127.0.0.1:9099"
 # flota) siempre queda en {{ sendguard_config_dir }}/api.key (0600 root), de
 # donde sendguard-ctl la lee automáticamente cuando no se le pasa -key.
 sendguard_api_key: ""
-sendguard_policyd_listen: "127.0.0.1:9100"
 sendguard_daily_report_hour: 8
 sendguard_local_db_max_size_mb: 100
 

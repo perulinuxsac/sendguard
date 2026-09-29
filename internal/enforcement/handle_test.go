@@ -104,66 +104,6 @@ func TestHandleSuspendAcctVacia(t *testing.T) {
 	}
 }
 
-// ── handle — ActionRateLimit early returns ───────────────────────────────────
-
-func TestHandleRateLimitSinCuenta(t *testing.T) {
-	e := New(Config{PostfixSbin: "/tmp", PostfixConf: "/tmp"})
-
-	e.handle(context.Background(), detection.Alert{
-		Module: "test", Action: detection.ActionRateLimit, Account: "",
-	})
-
-	if e.Stats().RateLimitsTotal != 0 {
-		t.Error("cuenta vacía no debe aplicar rate-limit")
-	}
-}
-
-func TestHandleRateLimitSinPostfix(t *testing.T) {
-	e := New(Config{PostfixSbin: "", PostfixConf: ""})
-
-	e.handle(context.Background(), detection.Alert{
-		Module: "test", Action: detection.ActionRateLimit, Account: "user@domain.com",
-	})
-
-	if e.Stats().RateLimitsTotal != 0 {
-		t.Error("sin PostfixSbin no debe aplicar rate-limit")
-	}
-}
-
-func TestHandleRateLimitSinPostfixRegistraAudit(t *testing.T) {
-	// Regresión: la config faltante hacía `return` y la alerta no quedaba en el
-	// audit log ni en el forwarder, a diferencia de los fallos de block/suspend.
-	var buf bytes.Buffer
-	e := New(Config{AuditLog: audit.NewWithWriter(&buf)})
-
-	e.handle(context.Background(), detection.Alert{
-		Module: "test", Action: detection.ActionRateLimit,
-		Account: "user@domain.com", Timestamp: time.Now(),
-	})
-
-	if buf.Len() == 0 {
-		t.Error("rate_limit sin postfix configurado debe registrarse en el audit log")
-	}
-}
-
-// ── handle — ActionPurgeQueue early returns ──────────────────────────────────
-
-func TestHandlePurgeQueueSinDominio(t *testing.T) {
-	e := New(Config{PostfixSbin: "/tmp", PostfixConf: "/tmp"})
-
-	e.handle(context.Background(), detection.Alert{
-		Module: "test", Action: detection.ActionPurgeQueue, Domain: "",
-	})
-}
-
-func TestHandlePurgeQueueSinPostfix(t *testing.T) {
-	e := New(Config{PostfixSbin: "", PostfixConf: ""})
-
-	e.handle(context.Background(), detection.Alert{
-		Module: "test", Action: detection.ActionPurgeQueue, Domain: "example.com",
-	})
-}
-
 // ── handle — país permitido: se omite la contención pero SÍ se notifica ──────
 
 func TestHandleAllowedCountryNotificaSinContencion(t *testing.T) {

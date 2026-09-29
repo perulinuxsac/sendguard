@@ -9,7 +9,7 @@
 //	GET    /queue               — cola de correo Postfix actual
 //	GET    /domains             — dominios con alertas acumuladas
 //	GET    /whitelist           — contenido actual de la whitelist
-//	GET    /blocked/{ip}        — consulta rápida O(1) si una IP está bloqueada (usado por policyd)
+//	GET    /blocked/{ip}        — consulta rápida O(1) si una IP está bloqueada
 //
 // Endpoints protegidos (requieren X-Api-Key si está configurada):
 //
@@ -109,7 +109,7 @@ func New(addr string, deps Dependencies) *Server {
 	mux.HandleFunc("GET /blocked/{ip}", s.handleBlockedCheck)
 	// {ip...} (wildcard multi-segmento) para aceptar CIDRs, que contienen "/":
 	// con {ip} a secas, POST /blocked/200.25.47.0/24 no matchearía (404).
-	// El GET se mantiene en {ip}: el policy daemon consulta IPs individuales
+	// El GET se mantiene en {ip}: se consultan IPs individuales
 	// (la pertenencia a un CIDR bloqueado la resuelve GetBlockedIP).
 	mux.HandleFunc("DELETE /blocked/{ip...}", s.requireKey(s.handleUnblock))
 	mux.HandleFunc("POST /blocked/{ip...}", s.requireKey(s.handleBlock))
@@ -187,7 +187,6 @@ type statsJSON struct {
 	AlertsTotal      int64 `json:"alerts_total"`
 	BlocksTotal      int64 `json:"blocks_total"`
 	SuspensionsTotal int64 `json:"suspensions_total"`
-	RateLimitsTotal  int64 `json:"rate_limits_total"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +231,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			AlertsTotal:      s.deps.Engine.AlertsTotal(),
 			BlocksTotal:      enfStats.BlocksTotal,
 			SuspensionsTotal: enfStats.SuspensionsTotal,
-			RateLimitsTotal:  enfStats.RateLimitsTotal,
 		},
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -258,10 +256,6 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP sendguard_suspensions_total Cuentas suspendidas vía zmprov\n")
 	fmt.Fprintf(w, "# TYPE sendguard_suspensions_total counter\n")
 	fmt.Fprintf(w, "sendguard_suspensions_total %d\n\n", enfStats.SuspensionsTotal)
-
-	fmt.Fprintf(w, "# HELP sendguard_rate_limits_total Cuentas con rate-limit aplicado\n")
-	fmt.Fprintf(w, "# TYPE sendguard_rate_limits_total counter\n")
-	fmt.Fprintf(w, "sendguard_rate_limits_total %d\n\n", enfStats.RateLimitsTotal)
 
 	fmt.Fprintf(w, "# HELP sendguard_blocked_ips_active IPs actualmente bloqueadas\n")
 	fmt.Fprintf(w, "# TYPE sendguard_blocked_ips_active gauge\n")

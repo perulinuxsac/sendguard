@@ -391,8 +391,8 @@ func TestSeverityFromScore(t *testing.T) {
 		{29, SeverityLog},
 		{30, SeverityWarn},
 		{49, SeverityWarn},
-		{50, SeverityRateLimit},
-		{79, SeverityRateLimit},
+		{50, SeverityHigh},
+		{79, SeverityHigh},
 		{80, SeveritySuspend},
 		{100, SeveritySuspend},
 	}

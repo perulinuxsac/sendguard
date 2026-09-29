@@ -169,7 +169,6 @@ func TestStatusStatsPresentes(t *testing.T) {
 		stats: enforcement.EnforcerStats{
 			BlocksTotal:      5,
 			SuspensionsTotal: 2,
-			RateLimitsTotal:  1,
 		},
 	}
 	srv := newTestServer(enf, &mockEngine{events: 1000, alerts: 8})

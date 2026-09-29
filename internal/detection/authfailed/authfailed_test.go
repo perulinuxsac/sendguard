@@ -61,8 +61,8 @@ func TestExactThreshold(t *testing.T) {
 	if a.Score != 60 {
 		t.Errorf("Score: got %d, want 60", a.Score)
 	}
-	if a.Severity != detection.SeverityRateLimit {
-		t.Errorf("Severity: got %d, want SeverityRateLimit(%d)", a.Severity, detection.SeverityRateLimit)
+	if a.Severity != detection.SeverityHigh {
+		t.Errorf("Severity: got %d, want SeverityHigh(%d)", a.Severity, detection.SeverityHigh)
 	}
 	if len(a.Reasons) == 0 {
 		t.Error("Reasons no debe estar vacío")
@@ -186,8 +186,8 @@ func TestSeverityFromScore(t *testing.T) {
 		{29, detection.SeverityLog},
 		{30, detection.SeverityWarn},
 		{49, detection.SeverityWarn},
-		{50, detection.SeverityRateLimit},
-		{79, detection.SeverityRateLimit},
+		{50, detection.SeverityHigh},
+		{79, detection.SeverityHigh},
 		{80, detection.SeveritySuspend},
 		{100, detection.SeveritySuspend},
 	}

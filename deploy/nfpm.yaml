@@ -18,8 +18,8 @@ maintainer: "PeruLinux <soporte@perulinux.pe>"
 description: |
   SendGuard — protección SMTP/IMAP para servidores de correo Zimbra.
   Detección de abuso (brute force, password spray, account takeover,
-  impossible traveler, colas, rebotes) con bloqueo de IPs vía firewall
-  e integración Postfix policy daemon.
+  impossible traveler, colas, rebotes). Contención solo por firewall
+  (ipset/ufw) y suspensión de cuenta; no modifica la configuración SMTP.
 vendor: "PeruLinux"
 homepage: "https://github.com/perulinux/sendguard"
 license: "Proprietary"
@@ -35,16 +35,14 @@ contents:
   - src: dist/sendguard-ctl
     dst: /usr/local/bin/sendguard-ctl
     file_info: { mode: 0755 }
-  - src: dist/sendguard-policyd
-    dst: /usr/local/bin/sendguard-policyd
+  # Retira hooks SMTP de versiones <1.1.0 (lo ejecuta postinstall).
+  - src: deploy/remove_smtp_hooks.sh
+    dst: /usr/local/lib/sendguard/remove_smtp_hooks.sh
     file_info: { mode: 0755 }
 
   # ── Units systemd ────────────────────────────────────────────────────────────
   - src: deploy/sendguard-agent.service
     dst: /etc/systemd/system/sendguard-agent.service
-    file_info: { mode: 0644 }
-  - src: deploy/sendguard-policyd.service
-    dst: /etc/systemd/system/sendguard-policyd.service
     file_info: { mode: 0644 }
 
   # ── Directorios de estado/config (creados con permisos restrictivos) ─────────

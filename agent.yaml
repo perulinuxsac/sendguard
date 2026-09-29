@@ -22,13 +22,10 @@ zimbra:
     mailbox: "/opt/zimbra/log/mailbox.log"   # log de Zimbra — IMAP/POP3/SOAP (opcional, dejar vacío para deshabilitar)
   workers: 4
   zmprov_bin:   "/opt/zimbra/bin/zmprov"      # ruta completa a zmprov (systemd no incluye /opt/zimbra/bin en $PATH)
-  postfix_sbin: "/opt/zimbra/common/sbin"    # directorio de binarios de Postfix de Zimbra
-  postfix_conf: "/opt/zimbra/common/conf"    # directorio de configuración de Postfix de Zimbra
-  # Para activar rate-limit, ejecutar una sola vez:
-  #   zmprov mcf zimbraMtaSmtpdSenderRestrictions \
-  #       "check_sender_access lmdb:/opt/zimbra/common/conf/sendguard_access" \
-  #       "permit_sasl_authenticated" \
-  #       "reject_unauthenticated_sender_login_mismatch"
+  postfix_sbin: "/opt/zimbra/common/sbin"    # binarios de Postfix de Zimbra (solo lectura de la cola: sendguard-ctl queue)
+  postfix_conf: "/opt/zimbra/common/conf"    # configuración de Postfix de Zimbra (solo lectura)
+  # SendGuard NO modifica la configuración SMTP ni la cola: la contención es
+  # solo firewall (ipset/ufw) y suspensión de cuenta (zmprov).
 
 # Reglas de detección — umbrales configurables por servidor
 rules:
@@ -144,12 +141,6 @@ firewall:
   backend: "firewalld-ipset"
   ban_seconds: 3600         # bloquear IP por 1 hora (0 = permanente)
 
-# Policy Daemon — rechazo en tiempo real vía Postfix check_policy_service
-# Requiere una configuración única en Postfix (ver docs/postfix-policy.md).
-# Con listen vacío el daemon no se inicia (el agente principal no se ve afectado).
-policy_daemon:
-  listen: "127.0.0.1:9100"  # vacío = deshabilitado
-
 # API HTTP de observabilidad y control
 # Solo escucha en localhost por defecto; nunca exponer sin autenticación en producción.
 api:
@@ -187,7 +178,7 @@ notification:
   max_per_minute: 10      # máximo 10 notificaciones distintas por minuto
   # on_actions: filtra qué acciones generan notificaciones push (Telegram/email/webhook).
   # Si está vacío (o comentado) se notifica todo.
-  # Valores posibles: block_ip | suspend_account | rate_limit | notify_only
+  # Valores posibles: block_ip | suspend_account | notify_only
   # Recomendado: solo suspend_account para recibir alertas solo cuando una cuenta es comprometida.
   on_actions:
     - suspend_account

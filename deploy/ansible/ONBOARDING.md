@@ -34,7 +34,7 @@ En la raíz del repo:
 
 ```bash
 cd /root/sendguard
-make package        # → dist/sendguard-agent, sendguard-ctl, sendguard-policyd
+make package        # → dist/sendguard-agent, sendguard-ctl
 ```
 
 El rol aborta el despliegue si falta cualquiera de los tres en `dist/`.
@@ -187,12 +187,15 @@ Lo que hace el rol, en orden:
 1. Preflight + autodetección (OS, firewall, rutas Zimbra, mail log).
 2. Verifica que los binarios existen en `dist/`.
 3. Crea `/etc/sendguard` y `/var/lib/sendguard`.
-4. Copia los binarios a `/usr/local/bin`.
-5. Descarga la DB GeoIP MaxMind (si hay credenciales) + cron de actualización
+4. Retira hooks SMTP de versiones < 1.1.0 (quita `check_policy_service` /
+   `sendguard_access` de Postfix y después elimina `sendguard-policyd`).
+   En un host nuevo no hace nada.
+5. Copia los binarios a `/usr/local/bin`.
+6. Descarga la DB GeoIP MaxMind (si hay credenciales) + cron de actualización
    semanal.
-6. Genera `/etc/sendguard/agent.yaml` desde el template.
-7. Instala y habilita las units `sendguard-agent` y `sendguard-policyd`.
-8. Smoke-check final (ver paso 9).
+7. Genera `/etc/sendguard/agent.yaml` desde el template.
+8. Instala y habilita la unit `sendguard-agent`.
+9. Smoke-check final (ver paso 9).
 
 ---
 
@@ -200,7 +203,8 @@ Lo que hace el rol, en orden:
 
 ### Automática (corre al final del deploy, no intrusiva)
 
-El rol confirma que `sendguard-agent` y `sendguard-policyd` están `active`,
+El rol confirma que `sendguard-agent` está `active`, que Postfix no referencia
+a SendGuard,
 reporta la versión instalada y sondea `GET /health` de la API. Si algo falla, el
 playbook falla.
 
@@ -208,14 +212,14 @@ Comprobación manual rápida en cualquier momento:
 
 ```bash
 ansible mail1.cliente-nuevo.pe -a \
-  'systemctl is-active sendguard-agent sendguard-policyd' --become
+  'systemctl is-active sendguard-agent' --become
 ```
 
 O ya dentro del servidor por SSH:
 
 ```bash
 ssh root@200.123.45.67
-systemctl status sendguard-agent sendguard-policyd
+systemctl status sendguard-agent
 journalctl -u sendguard-agent -f
 curl -s http://127.0.0.1:9099/health
 /usr/local/bin/sendguard-ctl status
@@ -282,5 +286,5 @@ ansible-playbook site.yml --ask-vault-pass --check --diff --limit mail1.cliente-
 ansible-playbook site.yml --ask-vault-pass --limit mail1.cliente-nuevo.pe
 
 # 8. Verificar
-ansible mail1.cliente-nuevo.pe -a 'systemctl is-active sendguard-agent sendguard-policyd' --become
+ansible mail1.cliente-nuevo.pe -a 'systemctl is-active sendguard-agent' --become
 ```

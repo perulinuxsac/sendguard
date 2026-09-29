@@ -100,19 +100,22 @@ sendguard-1.0.5-1.x86_64.rpm
 
 | Path | Mode | Notes |
 |---|---|---|
-| `/usr/local/bin/sendguard-{agent,ctl,policyd}` | 0755 | static binaries |
-| `/etc/systemd/system/sendguard-{agent,policyd}.service` | 0644 | systemd units |
+| `/usr/local/bin/sendguard-{agent,ctl}` | 0755 | static binaries |
+| `/usr/local/lib/sendguard/remove_smtp_hooks.sh` | 0755 | removes pre-1.1.0 Postfix hooks (run by post-install) |
+| `/etc/systemd/system/sendguard-agent.service` | 0644 | systemd unit |
 | `/etc/sendguard/` | 0750 | config dir |
 | `/etc/sendguard/agent.yaml.example` | 0640 | reference config (not the active one) |
 | `/var/lib/sendguard/` | 0750 | SQLite DB dir |
 
-The maintainer scripts run `systemctl daemon-reload`, enable both services, and:
+The maintainer scripts run `systemctl daemon-reload`, enable the service, and:
 
-- **Fresh install** — services are enabled but **not started** (no config yet).
+- **Fresh install** — the service is enabled but **not started** (no config yet).
   The post-install prints the next steps.
-- **Upgrade** — if `/etc/sendguard/agent.yaml` already exists, both services are
-  restarted with the new binaries.
-- **Removal** — services are stopped and disabled only on a real uninstall
+- **Upgrade** — if `/etc/sendguard/agent.yaml` already exists, the agent is
+  restarted with the new binaries. Upgrading from < 1.1.0 first removes the
+  SendGuard hooks from Postfix (`check_policy_service inet:127.0.0.1:9100`,
+  `sendguard_access`) and only then stops and removes `sendguard-policyd`.
+- **Removal** — the service is stopped and disabled only on a real uninstall
   (not during an upgrade). `/etc/sendguard` and `/var/lib/sendguard` (config and
   database) are **preserved**.
 
@@ -128,7 +131,7 @@ dnf install ./sendguard-1.0.5-1.x86_64.rpm
 # Then configure and start:
 cp /etc/sendguard/agent.yaml.example /etc/sendguard/agent.yaml   # or deploy via Ansible
 $EDITOR /etc/sendguard/agent.yaml                                # set server_id, client_name, ...
-systemctl enable --now sendguard-agent sendguard-policyd
+systemctl enable --now sendguard-agent
 ```
 
 Upgrading later is just `apt install ./sendguard_<newver>_amd64.deb` /
@@ -386,7 +389,6 @@ Counters:
   alerts emitted   : 0
   IPs blocked      : 0
   accounts suspended: 0
-  rate-limits      : 0
 
 No IPs currently blocked.
 ```

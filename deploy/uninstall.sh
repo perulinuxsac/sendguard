@@ -23,9 +23,9 @@ echo ""
 echo "  Se eliminarán:"
 echo "    /usr/local/bin/sendguard-agent"
 echo "    /usr/local/bin/sendguard-ctl"
-echo "    /usr/local/bin/sendguard-policyd"
+echo "    /usr/local/lib/sendguard/"
 echo "    /etc/systemd/system/sendguard-agent.service"
-echo "    /etc/systemd/system/sendguard-policyd.service"
+echo "    sendguard-policyd y su hook en Postfix (instalaciones <1.1.0)"
 echo "    /etc/sendguard/          (configuración)"
 echo "    /var/lib/sendguard/      (base de datos SQLite + GeoIP)"
 echo "    /var/log/sendguard-audit.log"
@@ -36,10 +36,31 @@ echo ""
 read -rp "  ¿Confirmar desinstalación? [s/N]: " CONFIRM
 [[ "${CONFIRM,,}" == "s" ]] || { echo "  Cancelado."; exit 0; }
 
+# ── Retiro de la integración SMTP heredada ────────────────────────────────────
+# Instalaciones <1.1.0: hay que quitar check_policy_service de Postfix ANTES de
+# detener sendguard-policyd, o Postfix rechaza con 451 todo el correo entrante.
+section "── Integración SMTP heredada"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOOKS_SCRIPT=""
+for f in "$SCRIPT_DIR/remove_smtp_hooks.sh" /usr/local/lib/sendguard/remove_smtp_hooks.sh; do
+    [[ -f "$f" ]] && { HOOKS_SCRIPT="$f"; break; }
+done
+if [[ -n "$HOOKS_SCRIPT" ]]; then
+    if ! sh "$HOOKS_SCRIPT"; then
+        echo -e "${RED}  ✗${NC} No se pudo retirar el hook de SendGuard en Postfix; se aborta sin tocar nada más." >&2
+        exit 1
+    fi
+    ok "Postfix sin hooks de SendGuard"
+elif systemctl is-active --quiet sendguard-policyd 2>/dev/null; then
+    echo -e "${RED}  ✗${NC} sendguard-policyd activo y falta remove_smtp_hooks.sh: detenerlo cortaría el correo. Abortando." >&2
+    exit 1
+fi
+
 # ── Detener y deshabilitar servicios ──────────────────────────────────────────
 section "── Servicios systemd"
 
-for svc in sendguard-agent sendguard-policyd; do
+for svc in sendguard-agent; do
     if systemctl is-active --quiet "$svc" 2>/dev/null; then
         systemctl stop "$svc"
         ok "$svc detenido"
@@ -92,8 +113,7 @@ fi
 # ── Eliminar archivos de servicio systemd ─────────────────────────────────────
 section "── Archivos systemd"
 
-for f in /etc/systemd/system/sendguard-agent.service \
-          /etc/systemd/system/sendguard-policyd.service; do
+for f in /etc/systemd/system/sendguard-agent.service; do
     if [[ -f "$f" ]]; then
         rm -f "$f"
         ok "Eliminado: $f"
@@ -106,13 +126,16 @@ ok "systemd recargado"
 section "── Binarios"
 
 for bin in /usr/local/bin/sendguard-agent \
-           /usr/local/bin/sendguard-ctl \
-           /usr/local/bin/sendguard-policyd; do
+           /usr/local/bin/sendguard-ctl; do
     if [[ -f "$bin" ]]; then
         rm -f "$bin"
         ok "Eliminado: $bin"
     fi
 done
+if [[ -d /usr/local/lib/sendguard ]]; then
+    rm -rf /usr/local/lib/sendguard
+    ok "Eliminado: /usr/local/lib/sendguard/"
+fi
 
 # ── Eliminar configuración y datos ────────────────────────────────────────────
 section "── Configuración y datos"
