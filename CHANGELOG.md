@@ -9,7 +9,7 @@ Las versiones v1.0.6 – v1.0.10 surgieron de la respuesta a un incidente de
 compromiso masivo de cuentas en `webmail.perucloud.pe` (12 jun 2026), en el
 que cuentas hackeadas enviaban spam falseando el `From` del sobre.
 
-## [1.2.0] - Sin publicar
+## [1.2.0] - 2026-09-28
 
 Correcciones de la auditoría completa del proyecto.
 
@@ -43,6 +43,9 @@ Correcciones de la auditoría completa del proyecto.
   ipset; en ufw se saltaba las reglas 1-9 y podía borrar reglas del
   administrador. Ahora desbloquea vía el agente cada IP que él bloqueó, elimina
   el ipset `sendguard` y solo lista (sin borrar) las reglas dudosas.
+- **Tests del enforcer aislados del firewall real**: al correr como root, dos
+  tests llegaban al `firewall-cmd` del host. `TestMain` limita `PATH` a
+  herramientas inofensivas.
 
 ### Cambiado
 - **`sasl_connections` cuenta solo logins SMTP** (Postfix). Los de IMAP/POP3/
