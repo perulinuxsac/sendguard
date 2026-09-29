@@ -210,6 +210,7 @@ func TestLoadExistingBansDesdeStore(t *testing.T) {
 	s.SaveBan("5.6.7.8", "numbermessages", expiry)
 
 	e := New(Config{BanSeconds: 3600, Store: s})
+	e.fw = newMemFW() // LoadExistingBans concilia contra el firewall
 	e.LoadExistingBans(context.Background())
 
 	blocked := e.BlockedIPs()
@@ -241,6 +242,7 @@ func TestLoadExistingBansStoreExcluirExpirados(t *testing.T) {
 	s.SaveBan("2.2.2.2", "test", time.Now().Add(time.Hour))  // vigente
 
 	e := New(Config{BanSeconds: 3600, Store: s})
+	e.fw = newMemFW() // LoadExistingBans concilia contra el firewall
 	e.LoadExistingBans(context.Background())
 
 	blocked := e.BlockedIPs()
